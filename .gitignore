@@ -147,7 +147,6 @@ test_*.py
 
 # Log files
 *.log
-*.txt
 output.txt
 
 # Cache directories
