@@ -46,6 +46,7 @@ class PlayerMonitor:
         # Callbacks
         self.on_episode_detected: Optional[Callable[[EpisodeInfo], None]] = None
         self.on_episode_watched: Optional[Callable[[EpisodeInfo, float], None]] = None
+        self.on_player_closed: Optional[Callable[[], None]] = None
     
     def start_monitoring(self):
         """Start monitoring media players"""
@@ -80,19 +81,23 @@ class PlayerMonitor:
                 if proc.info['name'] in self.supported_players:
                     pid = proc.info['pid']
                     
-                    # Get command line to extract file path
-                    cmdline = proc.info['cmdline']
-                    file_path = self._extract_file_path(cmdline)
+                    # Get window title first (this contains the current file)
+                    window_title = self._get_window_title(pid)
                     
-                    if file_path and self._is_video_file(file_path):
-                        # Get window title (this might need platform-specific implementation)
-                        window_title = self._get_window_title(pid)
-                        
+                    # Try to extract current file from window title
+                    current_file = self._extract_file_from_title(window_title)
+                    
+                    # Fallback to command line if window title doesn't work
+                    if not current_file:
+                        cmdline = proc.info['cmdline']
+                        current_file = self._extract_file_path(cmdline)
+                    
+                    if current_file and self._is_video_file(current_file):
                         player_info = PlayerInfo(
                             pid=pid,
                             name=proc.info['name'],
-                            window_title=window_title or Path(file_path).name,
-                            file_path=file_path,
+                            window_title=window_title or Path(current_file).name,
+                            file_path=current_file,
                             start_time=time.time()
                         )
                         
@@ -104,6 +109,16 @@ class PlayerMonitor:
             
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
+        
+        # Check for file changes in existing players
+        for pid, current_player in current_players.items():
+            if pid in self.active_players:
+                old_player = self.active_players[pid]
+                # Check if the file path has changed
+                if (current_player.file_path != old_player.file_path and 
+                    current_player.file_path is not None):
+                    # File changed - handle old file as closed and new file as opened
+                    self._handle_file_change(old_player, current_player)
         
         # Check for closed players
         closed_pids = set(self.active_players.keys()) - set(current_players.keys())
@@ -169,6 +184,37 @@ class PlayerMonitor:
         except:
             return None
     
+    def _extract_file_from_title(self, window_title: str) -> Optional[str]:
+        """Extract file path from window title"""
+        if not window_title:
+            return None
+        
+        # PotPlayer window title formats:
+        # "filename.ext - PotPlayer"
+        # "[position/duration] filename.ext - PotPlayer"
+        # "/path/to/file/filename.ext - PotPlayer"
+        
+        # Remove PotPlayer suffix (including variants like "PotPlayer Rus")
+        title = window_title
+        if " - PotPlayer" in title:
+            title = title.split(" - PotPlayer")[0]
+        
+        # Remove time indicators like [00:00/00:00]
+        title = re.sub(r'^\[\d+:\d+/\d+:\d+\]\s*', '', title)
+        
+        # Check if it's a full path (Windows path with drive letter or UNC path)
+        if title and (title.startswith('\\\\') or (len(title) > 2 and title[1] == ':')):
+            # It's a full path
+            if Path(title).exists() and self._is_video_file(title):
+                return title
+        
+        # If not a full path, use the cleaned title as an identifier
+        # This allows us to detect file changes even without full paths
+        if title and title.strip():
+            return title.strip()
+        
+        return None
+    
     def _handle_new_player(self, player_info: PlayerInfo):
         """Handle newly detected player"""
         episode_info = self._parse_episode_info(player_info)
@@ -199,6 +245,14 @@ class PlayerMonitor:
             del self.watched_episodes[player_info.file_path]
             # Remove from updated episodes set
             self.updated_episodes.discard(player_info.file_path)
+    
+    def _handle_file_change(self, old_player: PlayerInfo, new_player: PlayerInfo):
+        """Handle when a player switches to a different file"""
+        # Handle the old file as if the player closed
+        self._handle_closed_player(old_player)
+        
+        # Handle the new file as if a new player opened
+        self._handle_new_player(new_player)
     
     def _check_watch_time_updates(self):
         """Check if any currently playing episodes have reached 1 minute watch time"""
