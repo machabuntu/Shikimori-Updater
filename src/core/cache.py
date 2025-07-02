@@ -360,3 +360,211 @@ class CacheManager:
         except Exception as e:
             print(f"Error loading detailed anime info: {e}")
             return None
+    
+    # Manga cache methods
+    def _get_manga_cache_file_path(self, user_id: int) -> str:
+        """Get manga cache file path for specific user"""
+        return os.path.join(self.cache_dir, f"manga_list_{user_id}.json")
+    
+    def save_manga_list(self, user_id: int, manga_list_data: Dict[str, List[Dict[str, Any]]]):
+        """Save manga list data to cache"""
+        try:
+            cache_file = self._get_manga_cache_file_path(user_id)
+            
+            cache_data = {
+                'user_id': user_id,
+                'timestamp': time.time(),
+                'datetime': datetime.now().isoformat(),
+                'data': manga_list_data
+            }
+            
+            # Write to temporary file first, then rename for atomic operation
+            temp_file = cache_file + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            
+            # Atomic rename
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+            os.rename(temp_file, cache_file)
+            
+            print(f"Manga cache saved: {cache_file}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving manga cache: {e}")
+            return False
+    
+    def load_manga_list(self, user_id: int) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Load manga list data from cache"""
+        try:
+            cache_file = self._get_manga_cache_file_path(user_id)
+            
+            if not os.path.exists(cache_file):
+                print("No manga cache file found")
+                return None
+            
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # Verify cache is for correct user
+            if cache_data.get('user_id') != user_id:
+                print("Manga cache user ID mismatch")
+                return None
+            
+            print(f"Manga cache loaded from: {cache_data.get('datetime', 'unknown time')}")
+            return cache_data.get('data')
+        
+        except Exception as e:
+            print(f"Error loading manga cache: {e}")
+            return None
+    
+    def add_manga_to_cache(self, user_id: int, manga_entry: Dict[str, Any]) -> bool:
+        """Add a new manga entry to the cache"""
+        try:
+            cache_file = self._get_manga_cache_file_path(user_id)
+            
+            if not os.path.exists(cache_file):
+                print("No manga cache file found to add manga to")
+                return False
+            
+            # Load current cache
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # Verify cache is for correct user
+            if cache_data.get('user_id') != user_id:
+                print("Manga cache user ID mismatch")
+                return False
+            
+            # Get the status to add the manga to
+            status = manga_entry.get('status', 'planned')
+            manga_list_data = cache_data.get('data', {})
+            
+            # Make sure the status list exists
+            if status not in manga_list_data:
+                manga_list_data[status] = []
+            
+            # Add the new manga entry
+            manga_list_data[status].append(manga_entry)
+            
+            # Update timestamp to mark cache as recently modified
+            cache_data['timestamp'] = time.time()
+            cache_data['datetime'] = datetime.now().isoformat()
+            
+            # Write back to cache file
+            temp_file = cache_file + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            
+            # Atomic rename
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+            os.rename(temp_file, cache_file)
+            
+            manga_id = manga_entry.get('id')
+            print(f"Added manga ID {manga_id} to cache in status '{status}'")
+            return True
+                
+        except Exception as e:
+            print(f"Error adding manga to cache: {e}")
+            return False
+    
+    def update_manga_in_cache(self, user_id: int, manga_id: int, updates: Dict[str, Any]) -> bool:
+        """Update a specific manga entry in the cache"""
+        try:
+            cache_file = self._get_manga_cache_file_path(user_id)
+            
+            if not os.path.exists(cache_file):
+                print("No manga cache file found to update")
+                return False
+            
+            # Load current cache
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # Verify cache is for correct user
+            if cache_data.get('user_id') != user_id:
+                print("Manga cache user ID mismatch")
+                return False
+            
+            # Find and update the manga entry
+            manga_list_data = cache_data.get('data', {})
+            updated = False
+            
+            for status_key, manga_list in manga_list_data.items():
+                for i, entry in enumerate(manga_list):
+                    if entry.get('id') == manga_id:
+                        # Check if status is changing (need to move between lists)
+                        old_status = entry.get('status', '')
+                        new_status = updates.get('status', old_status)
+                        
+                        if new_status != old_status and new_status in manga_list_data:
+                            # Remove from old status list
+                            manga_list_data[status_key].pop(i)
+                            # Update the entry with new data
+                            entry.update(updates)
+                            # Add to new status list
+                            manga_list_data[new_status].append(entry)
+                        else:
+                            # Just update in place
+                            entry.update(updates)
+                        
+                        updated = True
+                        break
+                
+                if updated:
+                    break
+            
+            if updated:
+                # Update timestamp to mark cache as recently modified
+                cache_data['timestamp'] = time.time()
+                cache_data['datetime'] = datetime.now().isoformat()
+                
+                # Write back to cache file
+                temp_file = cache_file + '.tmp'
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                
+                # Atomic rename
+                if os.path.exists(cache_file):
+                    os.remove(cache_file)
+                os.rename(temp_file, cache_file)
+                
+                print(f"Manga cache updated for manga ID {manga_id}")
+                return True
+            else:
+                print(f"Manga ID {manga_id} not found in cache")
+                return False
+                
+        except Exception as e:
+            print(f"Error updating manga cache: {e}")
+            return False
+    
+    def is_manga_cache_valid(self, user_id: int, max_age_hours: float = 24) -> bool:
+        """Check if manga cache is valid (exists and not too old)"""
+        try:
+            cache_file = self._get_manga_cache_file_path(user_id)
+            
+            if not os.path.exists(cache_file):
+                return False
+            
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # Check user ID
+            if cache_data.get('user_id') != user_id:
+                return False
+            
+            # Check age
+            cache_timestamp = cache_data.get('timestamp', 0)
+            current_timestamp = time.time()
+            age_hours = (current_timestamp - cache_timestamp) / 3600
+            
+            is_valid = age_hours < max_age_hours
+            print(f"Manga cache age: {age_hours:.1f} hours, valid: {is_valid}")
+            return is_valid
+            
+        except Exception as e:
+            print(f"Error checking manga cache validity: {e}")
+            return False

@@ -33,6 +33,7 @@ from utils.anime_matcher import AnimeMatcher
 from utils.enhanced_anime_matcher import EnhancedAnimeMatcher
 from gui.simple_auth_dialog import SimpleAuthDialog
 from gui.anime_list_frame import AnimeListFrame
+from gui.manga_list_frame import MangaListFrame
 from gui.search_frame import SearchFrame
 from gui.options_dialog import OptionsDialog
 from gui.modern_style import ModernStyle
@@ -59,6 +60,7 @@ class MainWindow:
         # Data
         self.current_user = None
         self.anime_list_data: Dict[str, List[Dict[str, Any]]] = {}
+        self.manga_list_data: Dict[str, List[Dict[str, Any]]] = {}
         self.monitoring_active = False
         self.tray_icon = None
         self.window_minimized = False
@@ -75,10 +77,13 @@ class MainWindow:
             # Auto-start monitoring if enabled
             if self.config.get('monitoring.auto_start', False):
                 self.root.after(2000, self._toggle_monitoring)  # Start after 2 seconds delay
+        else:
+            # Update window title for not logged in state
+            self._update_window_title()
     
     def _setup_window(self):
         """Setup main window properties"""
-        self.root.title("Shikimori Updater")
+        self.root.title("Shikimori Updater - Not logged in")
         
         # Set window size and position
         width = self.config.get('window.width', 1000)
@@ -152,9 +157,10 @@ class MainWindow:
         
         self.menu.add_command(label="Authentication...", command=self._handle_auth)
         self.menu.add_separator()
-        self.menu.add_command(label="Start/Stop Monitoring", command=self._toggle_monitoring)
+        self.menu.add_command(label="Start/Stop Scrobbling", command=self._toggle_monitoring)
         self.menu.add_separator()
-        self.menu.add_command(label="Refresh List", command=lambda: self._refresh_list(force_refresh=True))
+        self.menu.add_command(label="Refresh Anime List", command=lambda: self._refresh_list(force_refresh=True))
+        self.menu.add_command(label="Refresh Manga List", command=lambda: self._refresh_manga_list(force_refresh=True))
         self.menu.add_separator()
         self.menu.add_command(label="Options...", command=self._show_options)
         # Add dark theme toggle
@@ -168,21 +174,6 @@ class MainWindow:
         self.menu.add_command(label="View Logs", command=self._show_log_viewer)
         self.menu.add_separator()
         self.menu.add_command(label="Exit", command=self._exit_application)
-        
-        # User status
-        user_frame = ttk.Frame(toolbar)
-        user_frame.pack(side=tk.LEFT, padx=(0, 10), pady=2)
-        
-        self.user_label = ttk.Label(user_frame, text="Not logged in")
-        self.user_label.pack(side=tk.LEFT)
-        
-        # Monitoring status
-        monitor_status_frame = ttk.Frame(toolbar)
-        monitor_status_frame.pack(side=tk.LEFT, padx=(0, 10), pady=2)
-        
-        ttk.Label(monitor_status_frame, text="Monitoring:").pack(side=tk.LEFT, padx=(0, 5))
-        self.monitor_status = ttk.Label(monitor_status_frame, text="Stopped", foreground="red")
-        self.monitor_status.pack(side=tk.LEFT)
         
         # Compact anime info panel  
         self._create_compact_anime_info(toolbar)
@@ -200,17 +191,22 @@ class MainWindow:
         name_label = ttk.Label(name_row, textvariable=self.compact_anime_name_var, font=("Segoe UI", 9, "bold"))
         name_label.pack(side=tk.LEFT)
         
-        # Second row - Controls
-        controls_row = ttk.Frame(info_frame)
-        controls_row.pack(fill=tk.X)
+        # Second row - Progress Controls
+        progress_row = ttk.Frame(info_frame)
+        progress_row.pack(fill=tk.X, pady=(0, 2))
 
         # Progress control
-        progress_frame = ttk.Frame(controls_row)
+        progress_frame = ttk.Frame(progress_row)
         progress_frame.pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Label(progress_frame, text="Ep:").pack(side=tk.LEFT, padx=(0, 2))
 
-        # Episode entry (compact)
+        # Decrease button for episodes/chapters (20% smaller)
+        self.compact_decrease_btn = ttk.Button(progress_frame, text="-", width=2,
+                                             command=self._compact_decrease_progress)
+        self.compact_decrease_btn.pack(side=tk.LEFT, padx=(0, 2))
+        
+        # Episode entry (compact) - this will change to chapters in manga mode
         self.compact_episode_var = tk.StringVar(value="0")
         self.compact_episode_entry = ttk.Entry(progress_frame, textvariable=self.compact_episode_var, width=4, justify=tk.CENTER)
         self.compact_episode_entry.pack(side=tk.LEFT, padx=2)
@@ -220,11 +216,49 @@ class MainWindow:
         self.compact_episode_entry.bind('<KeyPress>', self._on_compact_episode_key_press)
 
         self.compact_total_episodes_var = tk.StringVar(value="/?")
-        ttk.Label(progress_frame, textvariable=self.compact_total_episodes_var).pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(progress_frame, textvariable=self.compact_total_episodes_var).pack(side=tk.LEFT, padx=(2, 2))
+        
+        # Increase button for episodes/chapters (20% smaller)
+        self.compact_increase_btn = ttk.Button(progress_frame, text="+", width=2,
+                                             command=self._compact_increase_progress)
+        self.compact_increase_btn.pack(side=tk.LEFT, padx=(2, 10))
+        
+        # Volume controls (hidden by default for anime mode)
+        self.volume_frame = ttk.Frame(progress_row)
+        self.volume_frame.pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Label(self.volume_frame, text="Vol:").pack(side=tk.LEFT, padx=(0, 2))
+        
+        # Decrease button for volumes (20% smaller)
+        self.compact_volume_decrease_btn = ttk.Button(self.volume_frame, text="-", width=2,
+                                                    command=self._compact_decrease_volumes)
+        self.compact_volume_decrease_btn.pack(side=tk.LEFT, padx=(0, 2))
+        
+        # Volume entry
+        self.compact_volume_var = tk.StringVar(value="0")
+        self.compact_volume_entry = ttk.Entry(self.volume_frame, textvariable=self.compact_volume_var, width=4, justify=tk.CENTER)
+        self.compact_volume_entry.pack(side=tk.LEFT, padx=2)
+        self.compact_volume_entry.bind('<Return>', self._on_compact_volume_entry)
+        self.compact_volume_entry.bind('<FocusOut>', self._on_compact_volume_entry)
+        
+        self.compact_total_volumes_var = tk.StringVar(value="/?")
+        ttk.Label(self.volume_frame, textvariable=self.compact_total_volumes_var).pack(side=tk.LEFT, padx=(2, 2))
+        
+        # Increase button for volumes (20% smaller)
+        self.compact_volume_increase_btn = ttk.Button(self.volume_frame, text="+", width=2,
+                                                    command=self._compact_increase_volumes)
+        self.compact_volume_increase_btn.pack(side=tk.LEFT, padx=(2, 0))
+        
+        # Initially hide volume controls (anime mode)
+        self.volume_frame.pack_forget()
+
+        # Third row - Status and Score Controls
+        status_score_row = ttk.Frame(info_frame)
+        status_score_row.pack(fill=tk.X)
 
         # Status control (compact)
-        status_frame = ttk.Frame(controls_row)
-        status_frame.pack(side=tk.LEFT, padx=(10, 0))
+        status_frame = ttk.Frame(status_score_row)
+        status_frame.pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Label(status_frame, text="Status:").pack(side=tk.LEFT, padx=(0, 2))
 
@@ -236,7 +270,7 @@ class MainWindow:
         self.compact_status_combo.bind('<<ComboboxSelected>>', self._on_compact_status_changed)
 
         # Score control (compact)
-        score_frame = ttk.Frame(controls_row)
+        score_frame = ttk.Frame(status_score_row)
         score_frame.pack(side=tk.LEFT, padx=(10, 0))
 
         ttk.Label(score_frame, text="Score:").pack(side=tk.LEFT, padx=(0, 2))
@@ -247,6 +281,9 @@ class MainWindow:
                                                width=3, state="readonly")
         self.compact_score_combo.pack(side=tk.LEFT)
         self.compact_score_combo.bind('<<ComboboxSelected>>', self._on_compact_score_changed)
+        
+        # Store current mode (anime or manga)
+        self.current_mode = 'anime'  # Default to anime mode
         
         # Initially disable controls
         self._set_compact_controls_enabled(False)
@@ -293,11 +330,17 @@ class MainWindow:
                                     font=("Arial", 11, "bold"))
         anime_name_label.pack(anchor=tk.W)
         
-        # Anime details
+        # Anime details - First row (Type and Year)
         self.anime_details_var = tk.StringVar(value="")
         anime_details_label = ttk.Label(left_frame, textvariable=self.anime_details_var, 
                                        foreground="gray")
         anime_details_label.pack(anchor=tk.W)
+        
+        # Anime details - Second row (Status and Score)
+        self.anime_status_score_var = tk.StringVar(value="")
+        anime_status_score_label = ttk.Label(left_frame, textvariable=self.anime_status_score_var, 
+                                            foreground="gray")
+        anime_status_score_label.pack(anchor=tk.W)
         
         # Right side - Controls
         controls_frame = ttk.Frame(main_info)
@@ -351,6 +394,12 @@ class MainWindow:
     
     def _create_content_area(self, parent):
         """Create main content area with notebook"""
+        # Initialize variables needed for set_selected_anime method
+        self.anime_name_var = tk.StringVar(value="No anime selected")
+        self.anime_details_var = tk.StringVar(value="")
+        self.anime_status_score_var = tk.StringVar(value="")
+        self.selected_anime = None
+        
         # Create notebook for tabs
         self.notebook = ttk.Notebook(parent)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
@@ -358,6 +407,10 @@ class MainWindow:
         # Anime List tab
         self.anime_list_frame = AnimeListFrame(self.notebook, self)
         self.notebook.add(self.anime_list_frame, text="Anime List")
+        
+        # Manga List tab
+        self.manga_list_frame = MangaListFrame(self.notebook, self)
+        self.notebook.add(self.manga_list_frame, text="Manga List")
         
         # Search tab
         self.search_frame = SearchFrame(self.notebook, self)
@@ -413,6 +466,9 @@ class MainWindow:
                 
                 # Load anime list
                 self._refresh_list_data()
+                
+                # Load manga list
+                self._refresh_manga_list_data()
                 
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load user data: {str(e)}"))
@@ -519,11 +575,20 @@ class MainWindow:
     
     def _update_auth_ui(self):
         """Update authentication UI elements"""
+        self._update_window_title()
+    
+    def _update_window_title(self):
+        """Update window title with user and monitoring status"""
+        base_title = "Shikimori Updater"
+        
         if self.current_user:
             username = self.current_user.get('nickname', 'Unknown')
-            self.user_label.config(text=f"Logged in as: {username}")
+            scrobbling_status = "Active" if self.monitoring_active else "Passive"
+            title = f"{base_title} - Logged as {username} - Scrobbling {scrobbling_status}"
         else:
-            self.user_label.config(text="Not logged in")
+            title = f"{base_title} - Not logged in"
+        
+        self.root.title(title)
     
     def _toggle_monitoring(self):
         """Toggle player monitoring"""
@@ -534,12 +599,13 @@ class MainWindow:
         if self.monitoring_active:
             self.player_monitor.stop_monitoring()
             self.monitoring_active = False
-            self.monitor_status.config(text="Stopped", foreground="red")
             self.current_anime_var.set("Now Watching: None")  # Clear current episode display
         else:
             self.player_monitor.start_monitoring()
             self.monitoring_active = True
-            self.monitor_status.config(text="Active", foreground="green")
+        
+        # Update window title with new monitoring status
+        self._update_window_title()
     
     def _on_episode_detected(self, episode_info: EpisodeInfo):
         """Handle detected episode"""
@@ -718,6 +784,24 @@ class MainWindow:
                 display_name = name
             self.compact_anime_name_var.set(display_name)
             
+            # Update detailed info panel
+            self.anime_name_var.set(name)
+            
+            # First row: Type and Year
+            anime_type = anime.get('kind', 'Unknown').upper()
+            aired_on = anime.get('aired_on', '')
+            year = aired_on[:4] if aired_on else 'Unknown'
+            type_year_info = f"Type: {anime_type} | Year: {year}"
+            self.anime_details_var.set(type_year_info)
+            
+            # Second row: Status and Score
+            status = anime_entry.get('status', '')
+            status_display = self.shikimori.STATUSES.get(status, 'Unknown') if status in self.shikimori.STATUSES else 'Unknown'
+            score = anime_entry.get('score', 0)
+            score_display = str(score) if score > 0 else 'Not scored'
+            status_score_info = f"Status: {status_display} | Score: {score_display}"
+            self.anime_status_score_var.set(status_score_info)
+            
             # Update progress in compact panel
             current_episodes = anime_entry.get('episodes', 0)
             total_episodes = anime.get('episodes', 0)
@@ -751,7 +835,10 @@ class MainWindow:
             self.compact_status_var.set("-")
             self.compact_score_var.set("-")
             
-            # Note: Main episode entry removed - only using compact panel
+            # Clear detailed info panel
+            self.anime_name_var.set("No anime selected")
+            self.anime_details_var.set("")
+            self.anime_status_score_var.set("")
             
             # Disable compact controls
             self._set_compact_controls_enabled(False)
@@ -917,12 +1004,24 @@ class MainWindow:
         threading.Thread(target=update_data, daemon=True).start()
     
     def _set_compact_controls_enabled(self, enabled: bool):
-        """Enable or disable the compact anime controls"""
+        """Enable or disable the compact anime/manga controls"""
         state = tk.NORMAL if enabled else tk.DISABLED
+        readonly_state = "readonly" if enabled else tk.DISABLED
         
+        # Episode/Chapter controls
         self.compact_episode_entry.config(state=state)
-        self.compact_status_combo.config(state="readonly" if enabled else tk.DISABLED)
-        self.compact_score_combo.config(state="readonly" if enabled else tk.DISABLED)
+        self.compact_decrease_btn.config(state=state)
+        self.compact_increase_btn.config(state=state)
+        
+        # Volume controls (only visible in manga mode)
+        if hasattr(self, 'compact_volume_entry'):
+            self.compact_volume_entry.config(state=state)
+            self.compact_volume_decrease_btn.config(state=state)
+            self.compact_volume_increase_btn.config(state=state)
+        
+        # Status and score controls
+        self.compact_status_combo.config(state=readonly_state)
+        self.compact_score_combo.config(state=readonly_state)
     
     def _on_compact_episode_focus_in(self, event=None):
         """Handle when compact episode entry gets focus - record which anime we're editing"""
@@ -1131,7 +1230,7 @@ class MainWindow:
             menu = pystray.Menu(
                 pystray.MenuItem("Show Window", self._show_from_tray, default=True),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Start/Stop Monitoring", self._toggle_monitoring_from_tray),
+                pystray.MenuItem("Start/Stop Scrobbling", self._toggle_monitoring_from_tray),
                 pystray.MenuItem("Refresh List", self._refresh_from_tray),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Exit", self._exit_from_tray)
@@ -1448,3 +1547,372 @@ class MainWindow:
         else:
             # If not found, do a full refresh as fallback
             self._refresh_list()
+    
+    # Manga-specific methods
+    def get_manga_list_data(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Get current manga list data"""
+        return self.manga_list_data
+    
+    def refresh_manga_list(self):
+        """Public method to refresh manga list (forces full refresh and cache rebuild)"""
+        self._refresh_manga_list(force_refresh=True)
+    
+    def set_selected_manga(self, manga_entry: Optional[Dict[str, Any]]):
+        """Set the currently selected manga in the info panel"""
+        # Store selected manga (different from anime)
+        self.selected_manga = manga_entry
+        self.selected_anime = None  # Clear anime selection
+        
+        if manga_entry:
+            manga = manga_entry.get('manga', {})
+            
+            # Update compact panel for manga
+            name = manga.get('name', 'Unknown')
+            # Truncate long names for compact display
+            if len(name) > 50:
+                display_name = name[:47] + "..."
+            else:
+                display_name = name
+            self.compact_anime_name_var.set(display_name + " (Manga)")
+            
+            # Switch to manga mode - show chapters and volumes separately
+            self._switch_to_manga_mode(manga_entry)
+            
+            # Update status in compact panel
+            status = manga_entry.get('status', '')
+            if status in self.shikimori.MANGA_STATUSES:
+                status_display = self.shikimori.MANGA_STATUSES[status]
+                self.compact_status_var.set(status_display)
+            else:
+                self.compact_status_var.set("-")
+            
+            # Update score in compact panel
+            score = manga_entry.get('score', 0)
+            if score > 0:
+                self.compact_score_var.set(str(score))
+            else:
+                self.compact_score_var.set("-")
+                
+            # Enable controls
+            self._set_compact_controls_enabled(True)
+        else:
+            # Clear manga selection
+            self.selected_manga = None
+            self._switch_to_anime_mode()
+            self.compact_anime_name_var.set("None")
+            self.compact_status_var.set("-")
+            self.compact_score_var.set("-")
+            self._set_compact_controls_enabled(False)
+    
+    def _refresh_manga_list(self, force_refresh: bool = False):
+        """Refresh manga list from Shikimori"""
+        if not self.config.is_authenticated:
+            messagebox.showwarning("Warning", "Please login to Shikimori first")
+            return
+        
+        def refresh_data():
+            try:
+                self._refresh_manga_list_data(force_refresh=force_refresh)
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to refresh manga list: {str(e)}"))
+                self.root.after(0, lambda: self._set_status("Error refreshing manga list"))
+        
+        threading.Thread(target=refresh_data, daemon=True).start()
+    
+    def _refresh_manga_list_data(self, force_refresh: bool = False):
+        """Refresh manga list data (called from background thread)"""
+        if not self.current_user:
+            return
+        
+        user_id = self.current_user['id']
+        
+        # Try to load from cache first (unless forced refresh)
+        if not force_refresh:
+            self.root.after(0, lambda: self._set_status("Loading manga list from cache..."))
+            cached_data = self.cache_manager.load_manga_list(user_id)
+            
+            if cached_data:
+                self.manga_list_data = cached_data
+                total_manga = sum(len(manga_list) for manga_list in cached_data.values())
+                
+                # Update UI on main thread
+                self.root.after(0, lambda: self.manga_list_frame.update_list(self.manga_list_data))
+                self.root.after(0, lambda: self._set_status(f"Manga list loaded from cache - {total_manga} manga"))
+                return
+        
+        # Load from API if no cache or forced refresh
+        self.root.after(0, lambda: self._set_status("Refreshing manga list from Shikimori..."))
+        
+        total_manga = 0
+        
+        # Load all statuses (no rewatching status for manga)
+        for i, status_key in enumerate(self.shikimori.MANGA_STATUSES.keys()):
+            status_display = self.shikimori.MANGA_STATUSES[status_key]
+            self.root.after(0, lambda s=status_display: self._set_status(f"Loading {s} manga..."))
+            
+            manga_list = self.shikimori.get_user_manga_list(user_id, status_key)
+            self.manga_list_data[status_key] = manga_list
+            total_manga += len(manga_list)
+            
+            # Update progress
+            progress = f"Loaded {total_manga} manga so far..."
+            self.root.after(0, lambda p=progress: self._set_status(p))
+        
+        # Save to cache
+        self.cache_manager.save_manga_list(user_id, self.manga_list_data)
+        
+        # Update UI on main thread
+        self.root.after(0, lambda: self.manga_list_frame.update_list(self.manga_list_data))
+        self.root.after(0, lambda: self._set_status(f"Manga list updated - {total_manga} manga loaded"))
+    
+    def _update_manga_cache_and_reload(self, manga_id: int, updates: Dict[str, Any]):
+        """Update manga cache directly and reload from cache to reflect changes"""
+        def update_and_reload():
+            if self.current_user:
+                user_id = self.current_user['id']
+                # Update the cache file directly
+                cache_updated = self.cache_manager.update_manga_in_cache(user_id, manga_id, updates)
+                
+                if cache_updated:
+                    # Reload from updated cache
+                    self.root.after(0, self._reload_manga_from_cache)
+                else:
+                    # Fallback to full refresh if cache update failed
+                    self.root.after(0, lambda: self._refresh_manga_list(force_refresh=True))
+        
+        threading.Thread(target=update_and_reload, daemon=True).start()
+    
+    def _reload_manga_from_cache(self):
+        """Reload manga list from cache (for reflecting manual updates)"""
+        if not self.current_user:
+            return
+        
+        def reload_data():
+            try:
+                user_id = self.current_user['id']
+                cached_data = self.cache_manager.load_manga_list(user_id)
+                
+                if cached_data:
+                    self.manga_list_data = cached_data
+                    total_manga = sum(len(manga_list) for manga_list in cached_data.values())
+                    
+                    # Update UI on main thread
+                    self.root.after(0, lambda: self.manga_list_frame.update_list(self.manga_list_data))
+                    self.root.after(0, lambda: self._set_status(f"Updated from manga cache - {total_manga} manga"))
+                else:
+                    # Fallback to full refresh if cache not available
+                    self.root.after(0, lambda: self._refresh_manga_list(force_refresh=True))
+                    
+            except Exception as e:
+                self.logger.error(f"Error reloading manga from cache: {e}")
+                # Fallback to full refresh on error
+                self.root.after(0, lambda: self._refresh_manga_list(force_refresh=True))
+        
+        threading.Thread(target=reload_data, daemon=True).start()
+    
+    def _switch_to_manga_mode(self, manga_entry):
+        """Switch UI to manga mode - show chapters and volumes"""
+        self.current_mode = 'manga'
+        
+        # Update episode label to chapters
+        progress_frame = self.compact_episode_entry.master
+        for widget in progress_frame.winfo_children():
+            if isinstance(widget, ttk.Label) and widget.cget('text') == 'Ep:':
+                widget.config(text='Ch:')
+                break
+        
+        # Show volume controls
+        self.volume_frame.pack(side=tk.LEFT, padx=(0, 10), after=progress_frame)
+        
+        # Update values
+        manga = manga_entry.get('manga', {})
+        current_chapters = manga_entry.get('chapters', 0)
+        total_chapters = manga.get('chapters', 0)
+        current_volumes = manga_entry.get('volumes', 0)
+        total_volumes = manga.get('volumes', 0)
+        
+        self.compact_episode_var.set(str(current_chapters))
+        self.compact_total_episodes_var.set(f"/{total_chapters if total_chapters else '?'}")
+        self.compact_volume_var.set(str(current_volumes))
+        self.compact_total_volumes_var.set(f"/{total_volumes if total_volumes else '?'}")
+        
+        # Update status combo values for manga
+        self.compact_status_combo.config(values=["-"] + list(self.shikimori.MANGA_STATUSES.values()))
+    
+    def _switch_to_anime_mode(self):
+        """Switch UI to anime mode - hide volumes, show episodes"""
+        self.current_mode = 'anime'
+        
+        # Update chapters label back to episodes
+        progress_frame = self.compact_episode_entry.master
+        for widget in progress_frame.winfo_children():
+            if isinstance(widget, ttk.Label) and widget.cget('text') == 'Ch:':
+                widget.config(text='Ep:')
+                break
+        
+        # Hide volume controls
+        self.volume_frame.pack_forget()
+        
+        # Reset values
+        self.compact_episode_var.set("0")
+        self.compact_total_episodes_var.set("/?")
+        self.compact_volume_var.set("0")
+        self.compact_total_volumes_var.set("/?")
+        
+        # Update status combo values for anime
+        self.compact_status_combo.config(values=["-"] + list(self.shikimori.STATUSES.values()))
+    
+    def _compact_decrease_progress(self):
+        """Decrease progress by 1 (episodes for anime, chapters for manga)"""
+        if self.current_mode == 'manga' and self.selected_manga:
+            self._decrease_manga_chapters()
+        elif self.current_mode == 'anime' and self.selected_anime:
+            self._decrease_progress()
+    
+    def _compact_increase_progress(self):
+        """Increase progress by 1 (episodes for anime, chapters for manga)"""
+        if self.current_mode == 'manga' and self.selected_manga:
+            self._increase_manga_chapters()
+        elif self.current_mode == 'anime' and self.selected_anime:
+            self._increase_progress()
+    
+    def _compact_decrease_volumes(self):
+        """Decrease manga volumes by 1"""
+        if not self.selected_manga:
+            return
+        
+        try:
+            current = int(self.compact_volume_var.get())
+            new_value = max(0, current - 1)
+            self.compact_volume_var.set(str(new_value))
+            self._update_manga_volumes(new_value)
+        except ValueError:
+            pass
+    
+    def _compact_increase_volumes(self):
+        """Increase manga volumes by 1"""
+        if not self.selected_manga:
+            return
+        
+        try:
+            current = int(self.compact_volume_var.get())
+            total = self.selected_manga['manga'].get('volumes', 9999)
+            new_value = min(total if total else 9999, current + 1)
+            self.compact_volume_var.set(str(new_value))
+            self._update_manga_volumes(new_value)
+        except ValueError:
+            pass
+    
+    def _decrease_manga_chapters(self):
+        """Decrease manga chapters by 1"""
+        if not self.selected_manga:
+            return
+        
+        try:
+            current = int(self.compact_episode_var.get())
+            new_value = max(0, current - 1)
+            self.compact_episode_var.set(str(new_value))
+            self._update_manga_chapters(new_value)
+        except ValueError:
+            pass
+    
+    def _increase_manga_chapters(self):
+        """Increase manga chapters by 1"""
+        if not self.selected_manga:
+            return
+        
+        try:
+            current = int(self.compact_episode_var.get())
+            total = self.selected_manga['manga'].get('chapters', 9999)
+            new_value = min(total if total else 9999, current + 1)
+            self.compact_episode_var.set(str(new_value))
+            self._update_manga_chapters(new_value)
+        except ValueError:
+            pass
+    
+    def _on_compact_volume_entry(self, event=None):
+        """Handle manual volume entry in compact panel"""
+        if not self.selected_manga:
+            return
+        
+        try:
+            new_value = int(self.compact_volume_var.get())
+            total = self.selected_manga['manga'].get('volumes', 9999)
+            new_value = max(0, min(total if total else 9999, new_value))
+            
+            # Only update if the value actually changed
+            current = self.selected_manga.get('volumes', 0)
+            if new_value != current:
+                self.compact_volume_var.set(str(new_value))
+                self._update_manga_volumes(new_value)
+            
+        except ValueError:
+            # Reset to current value if invalid
+            current = self.selected_manga.get('volumes', 0)
+            self.compact_volume_var.set(str(current))
+    
+    def _update_manga_chapters(self, chapters: int):
+        """Update manga chapter progress on Shikimori"""
+        if not self.selected_manga:
+            return
+        
+        def update_data():
+            try:
+                rate_id = self.selected_manga['id']
+                manga_name = self.selected_manga['manga'].get('name', 'Unknown')
+                
+                success = self.shikimori.update_manga_progress(
+                    rate_id, chapters=chapters)
+                
+                if success:
+                    self.root.after(0, lambda: self._set_status(
+                        f"Updated {manga_name} to chapter {chapters}"))
+                    
+                    # Update cache directly and reload from cache
+                    manga_id = self.selected_manga['id']
+                    self._update_manga_cache_and_reload(manga_id, {'chapters': chapters})
+                else:
+                    self.root.after(0, lambda: self._set_status(
+                        f"Failed to update {manga_name} chapters"))
+                    # Reset to previous value
+                    prev_chapters = self.selected_manga.get('chapters', 0)
+                    self.root.after(0, lambda: self.compact_episode_var.set(str(prev_chapters)))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(
+                    f"Error updating chapters: {str(e)}"))
+        
+        threading.Thread(target=update_data, daemon=True).start()
+    
+    def _update_manga_volumes(self, volumes: int):
+        """Update manga volume progress on Shikimori"""
+        if not self.selected_manga:
+            return
+        
+        def update_data():
+            try:
+                rate_id = self.selected_manga['id']
+                manga_name = self.selected_manga['manga'].get('name', 'Unknown')
+                
+                success = self.shikimori.update_manga_progress(
+                    rate_id, volumes=volumes)
+                
+                if success:
+                    self.root.after(0, lambda: self._set_status(
+                        f"Updated {manga_name} to volume {volumes}"))
+                    
+                    # Update cache directly and reload from cache
+                    manga_id = self.selected_manga['id']
+                    self._update_manga_cache_and_reload(manga_id, {'volumes': volumes})
+                else:
+                    self.root.after(0, lambda: self._set_status(
+                        f"Failed to update {manga_name} volumes"))
+                    # Reset to previous value
+                    prev_volumes = self.selected_manga.get('volumes', 0)
+                    self.root.after(0, lambda: self.compact_volume_var.set(str(prev_volumes)))
+                    
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(
+                    f"Error updating volumes: {str(e)}"))
+        
+        threading.Thread(target=update_data, daemon=True).start()

@@ -62,14 +62,14 @@ class OptionsDialog:
                                        variable=self.startup_var)
         startup_check.pack(anchor=tk.W, pady=(0, 5))
         
-        # Enable monitoring by default
+        # Enable scrobbling by default
         self.auto_monitor_var = tk.BooleanVar()
-        auto_monitor_check = ttk.Checkbutton(startup_frame, text="Enable monitoring by default on start",
+        auto_monitor_check = ttk.Checkbutton(startup_frame, text="Enable scrobbling by default on start",
                                             variable=self.auto_monitor_var)
         auto_monitor_check.pack(anchor=tk.W)
         
-        # Monitoring options
-        monitor_frame = ttk.LabelFrame(main_frame, text="Monitoring Options", padding="10")
+        # Scrobbling options
+        monitor_frame = ttk.LabelFrame(main_frame, text="Scrobbling Options", padding="10")
         monitor_frame.pack(fill=tk.X, pady=(0, 15))
         
         # Watch time setting

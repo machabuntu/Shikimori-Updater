@@ -24,9 +24,6 @@ class EnhancedAnimeMatcher(AnimeMatcher):
         
     def initialize_detailed_cache(self, user_id: int, anime_list_data: Dict[str, List[Dict[str, Any]]]):
         """Initialize detailed anime cache with synonyms for user's anime list"""
-        if self.cache_loaded:
-            return
-            
         print("Initializing enhanced anime matching with synonyms...")
         
         # Try to load from disk cache first
@@ -35,9 +32,11 @@ class EnhancedAnimeMatcher(AnimeMatcher):
             self.detailed_anime_cache = cached_details
             self.cache_loaded = True
             print(f"Loaded detailed anime info from cache: {len(cached_details)} entries")
-            
-            # Check if we need to update cache (missing anime or old cache)
-            anime_ids = self._get_all_anime_ids_from_list(anime_list_data)
+        
+        # Always check if we need to update cache (missing anime or old cache)
+        anime_ids = self._get_all_anime_ids_from_list(anime_list_data)
+        
+        if cached_details:
             missing_ids = anime_ids - set(cached_details.keys())
             
             if missing_ids:
@@ -49,7 +48,6 @@ class EnhancedAnimeMatcher(AnimeMatcher):
             return
         
         # No cache found, need to fetch all details
-        anime_ids = self._get_all_anime_ids_from_list(anime_list_data)
         print(f"No detailed cache found, fetching info for {len(anime_ids)} anime...")
         
         # Fetch in background to avoid blocking startup
