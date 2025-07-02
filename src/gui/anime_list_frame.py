@@ -130,7 +130,7 @@ class AnimeListFrame(ttk.Frame):
         self.tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", height=15)
         
         # Configure tags for anime status coloring
-        self.tree.tag_configure("non_released", background="#D6E9FF")  # Slightly darker soft blue for ongoing/announced anime
+        self._configure_anime_status_tags()
         
         # Configure columns with sorting
         self.tree.heading("#0", text="", anchor=tk.W)
@@ -169,6 +169,20 @@ class AnimeListFrame(ttk.Frame):
         
         # Bind selection change to update info panel
         self.tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
+    
+    def _configure_anime_status_tags(self):
+        """Configure tags for anime status coloring based on current theme"""
+        # Get the modern style instance from main window to check theme
+        modern_style = getattr(self.main_window, 'modern_style', None)
+        
+        if modern_style and modern_style.is_dark_theme():
+            # Dark theme - use a darker, more subtle blue
+            highlight_color = "#1A3A52"  # Dark blue-gray that works well on dark backgrounds
+        else:
+            # Light theme - use the original bright blue
+            highlight_color = "#D6E9FF"  # Light blue for light theme
+        
+        self.tree.tag_configure("non_released", background=highlight_color)
         
         # Context menu for advanced options
         self._create_context_menu()

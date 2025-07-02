@@ -8,6 +8,7 @@ import winreg
 import os
 import sys
 from pathlib import Path
+from gui.modern_style import ModernStyle
 
 class OptionsDialog:
     """Dialog for configuring application settings"""
@@ -19,7 +20,8 @@ class OptionsDialog:
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Options")
-        self.dialog.geometry("450x400")
+        # Don't set height initially - will be calculated after content is added
+        self.dialog.geometry("450x100")  # Temporary small height
         self.dialog.resizable(False, False)
         
         # Make dialog modal
@@ -28,6 +30,13 @@ class OptionsDialog:
         
         # Center dialog
         self._center_dialog()
+        
+        # Apply modern styling
+        dark_theme = config.get('ui.dark_theme', False)
+        self.modern_style = ModernStyle(self.dialog, dark_theme=dark_theme)
+        
+        # Apply title bar theme after dialog is fully set up
+        self.dialog.after(100, self.modern_style._apply_title_bar_theme)
         
         self._create_widgets()
     
@@ -101,6 +110,35 @@ class OptionsDialog:
                                  foreground="orange", font=("Arial", 8))
             note_label.pack(anchor=tk.W, pady=(5, 0))
         
+        # Notification options
+        notification_frame = ttk.LabelFrame(main_frame, text="Notification Options", padding="10")
+        notification_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Episode notifications
+        self.episode_notifications_var = tk.BooleanVar()
+        episode_check = ttk.Checkbutton(notification_frame, 
+                                       text="Notify when new episodes are available for watching anime",
+                                       variable=self.episode_notifications_var)
+        episode_check.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Release notifications
+        self.release_notifications_var = tk.BooleanVar()
+        release_check = ttk.Checkbutton(notification_frame, 
+                                      text="Notify when planned anime are fully released",
+                                      variable=self.release_notifications_var)
+        release_check.pack(anchor=tk.W)
+        
+        # Add note about notification dependencies
+        try:
+            from utils.notification_service import NotificationService
+            if not NotificationService.is_available():
+                note_label = ttk.Label(notification_frame, 
+                                     text="Note: Install 'win10toast' or 'plyer' for better notifications", 
+                                     foreground="orange", font=("Arial", 8))
+                note_label.pack(anchor=tk.W, pady=(5, 0))
+        except ImportError:
+            pass
+        
         # Load current values
         self._load_current_values()
         
@@ -110,6 +148,9 @@ class OptionsDialog:
         
         ttk.Button(buttons_frame, text="Save", command=self._save_changes).pack(side=tk.RIGHT, padx=(10, 0))
         ttk.Button(buttons_frame, text="Cancel", command=self.dialog.destroy).pack(side=tk.RIGHT)
+        
+        # Calculate and set dynamic height after all content is added
+        self.dialog.after(1, self._set_dynamic_height)
     
     def _load_current_values(self):
         """Load current configuration values"""
@@ -126,6 +167,10 @@ class OptionsDialog:
         # System tray settings
         self.minimize_to_tray_var.set(self.config.get('ui.minimize_to_tray', False))
         self.close_to_tray_var.set(self.config.get('ui.close_to_tray', False))
+        
+        # Notification settings
+        self.episode_notifications_var.set(self.config.get('notifications.episode_notifications', False))
+        self.release_notifications_var.set(self.config.get('notifications.release_notifications', False))
     
     def _is_in_startup(self):
         """Check if application is in Windows startup"""
@@ -203,9 +248,59 @@ class OptionsDialog:
             self.config.set('ui.minimize_to_tray', self.minimize_to_tray_var.get())
             self.config.set('ui.close_to_tray', self.close_to_tray_var.get())
             
+            # Save notification settings
+            self.config.set('notifications.episode_notifications', self.episode_notifications_var.get())
+            self.config.set('notifications.release_notifications', self.release_notifications_var.get())
+            
             self.changes_made = True
             messagebox.showinfo("Success", "Settings saved successfully!")
             self.dialog.destroy()
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
+    
+    def _set_dynamic_height(self):
+        """Calculate and set dynamic height based on content"""
+        try:
+            # Update all widgets to get accurate measurements
+            self.dialog.update_idletasks()
+            
+            # Get the required height of the main frame
+            main_frame = self.dialog.winfo_children()[0]  # First child is main_frame
+            required_height = main_frame.winfo_reqheight() + 40  # Add padding
+            
+            # Set minimum height to prevent too small dialogs
+            min_height = 300
+            final_height = max(min_height, required_height)
+            
+            # Get current position
+            current_geometry = self.dialog.geometry()
+            width_pos = current_geometry.split('x')[0]
+            pos_part = current_geometry.split('+')[1:] if '+' in current_geometry else []
+            
+            # Update geometry with new height
+            if pos_part:
+                new_geometry = f"{width_pos}x{final_height}+{'+'.join(pos_part)}"
+            else:
+                new_geometry = f"{width_pos}x{final_height}"
+            
+            self.dialog.geometry(new_geometry)
+            
+            # Re-center the dialog with new height
+            self._center_dialog_with_height(final_height)
+            
+        except Exception as e:
+            # Fallback to fixed height if calculation fails
+            print(f"Error calculating dynamic height: {e}")
+            self.dialog.geometry("450x500")
+    
+    def _center_dialog_with_height(self, height):
+        """Center dialog on parent with specific height"""
+        try:
+            self.dialog.update_idletasks()
+            x = self.parent.winfo_rootx() + (self.parent.winfo_width() - 450) // 2
+            y = self.parent.winfo_rooty() + (self.parent.winfo_height() - height) // 2
+            self.dialog.geometry(f"450x{height}+{x}+{y}")
+        except Exception:
+            # Fallback positioning
+            pass

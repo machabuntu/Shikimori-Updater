@@ -7,6 +7,11 @@ from tkinter import ttk, messagebox
 import webbrowser
 import urllib.parse
 import threading
+import http.server
+import socketserver
+import socket
+from gui.modern_style import ModernStyle
+from utils.logger import get_logger
 
 class AuthDialog:
     """Dialog for Shikimori authentication setup"""
@@ -30,6 +35,13 @@ class AuthDialog:
         x = (self.dialog.winfo_screenwidth() - 600) // 2
         y = (self.dialog.winfo_screenheight() - 790) // 2
         self.dialog.geometry(f"600x790+{x}+{y}")
+        
+        # Apply modern styling
+        dark_theme = config.get('ui.dark_theme', False)
+        self.modern_style = ModernStyle(self.dialog, dark_theme=dark_theme)
+        
+        # Apply title bar theme after dialog is fully set up
+        self.dialog.after(100, self.modern_style._apply_title_bar_theme)
         
         self._create_widgets()
         
@@ -56,9 +68,17 @@ class AuthDialog:
         except:
             bg_color = self.dialog.cget('bg')
         
+        # Apply theming to text widget
+        text_bg = self.modern_style.get_color('bg_card')
+        text_fg = self.modern_style.get_color('text_primary')
+        
         instructions_text = tk.Text(instructions_frame, height=12, wrap=tk.WORD, 
-                                  font=("Arial", 9), relief=tk.FLAT, 
-                                  background=bg_color,
+                                  font=("Segoe UI", 9), relief=tk.FLAT, 
+                                  background=text_bg,
+                                  foreground=text_fg,
+                                  selectbackground=self.modern_style.get_color('accent'),
+                                  selectforeground=self.modern_style.get_color('text_white'),
+                                  insertbackground=text_fg,
                                   state=tk.DISABLED, cursor="arrow")
         
         # Add scrollbar

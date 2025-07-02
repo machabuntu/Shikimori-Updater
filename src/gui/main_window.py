@@ -19,23 +19,25 @@ try:
     test_image = Image.new('RGB', (16, 16), 'black')
     test_icon = pystray.Icon('test', test_image)
     TRAY_AVAILABLE = True
-    print("System tray functionality available")
+    # Will log when logger is available
 except ImportError as e:
-    print(f"System tray not available - ImportError: {e}")
+    # Will log when logger is available
     TRAY_AVAILABLE = False
 except Exception as e:
-    print(f"System tray not available - Error: {e}")
+    # Will log when logger is available
     TRAY_AVAILABLE = False
 
 from api.shikimori_client import ShikimoriClient
 from utils.player_monitor import PlayerMonitor, EpisodeInfo
 from utils.anime_matcher import AnimeMatcher
 from utils.enhanced_anime_matcher import EnhancedAnimeMatcher
-from gui.auth_dialog import AuthDialog
+from gui.simple_auth_dialog import SimpleAuthDialog
 from gui.anime_list_frame import AnimeListFrame
 from gui.search_frame import SearchFrame
 from gui.options_dialog import OptionsDialog
+from gui.modern_style import ModernStyle
 from core.cache import CacheManager
+from utils.logger import get_logger
 
 class MainWindow:
     """Main application window"""
@@ -43,11 +45,16 @@ class MainWindow:
     def __init__(self, root: tk.Tk, config):
         self.root = root
         self.config = config
+        self.logger = get_logger('main_window')
         self.shikimori = ShikimoriClient(config)
         self.player_monitor = PlayerMonitor(config)
         self.cache_manager = CacheManager(config)
         # Use enhanced matcher with synonym support
         self.anime_matcher = EnhancedAnimeMatcher(self.shikimori, self.cache_manager)
+        
+        # Initialize notification manager
+        from utils.notification_manager import NotificationManager
+        self.notification_manager = NotificationManager(config, self.shikimori, self.cache_manager)
         
         # Data
         self.current_user = None
@@ -98,9 +105,12 @@ class MainWindow:
         self.root.bind('<Unmap>', self._on_minimize)
         self.root.bind('<Map>', self._on_restore)
         
-        # Configure style
-        style = ttk.Style()
-        style.theme_use('clam')
+        # Apply modern styling
+        dark_theme = self.config.get('ui.dark_theme', False)
+        self.modern_style = ModernStyle(self.root, dark_theme=dark_theme)
+        
+        # Apply title bar theme after window is fully set up
+        self.root.after(100, self.modern_style._apply_title_bar_theme)
         
         # Initialize system tray if available
         if TRAY_AVAILABLE:
@@ -109,7 +119,7 @@ class MainWindow:
     def _create_widgets(self):
         """Create main window widgets"""
         # Main container
-        main_frame = ttk.Frame(self.root)
+        main_frame = ttk.Frame(self.root, style='Modern.TFrame')
         main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Toolbar
@@ -127,15 +137,18 @@ class MainWindow:
         toolbar.pack(fill=tk.X, pady=(0, 5))
         
         # Left side - Menu dropdown
-        menu_frame = ttk.Frame(toolbar)
+        menu_frame = ttk.Frame(toolbar, style='Modern.TFrame')
         menu_frame.pack(side=tk.LEFT, padx=(0, 10), pady=2)
         
-        self.menu_button = ttk.Menubutton(menu_frame, text="Menu")
+        self.menu_button = ttk.Menubutton(menu_frame, text="Menu", style='Modern.TButton')
         self.menu_button.pack(side=tk.LEFT)
         
         # Create dropdown menu
         self.menu = tk.Menu(self.menu_button, tearoff=0)
         self.menu_button.config(menu=self.menu)
+        
+        # Apply modern styling to menu
+        self.modern_style.configure_menu(self.menu)
         
         self.menu.add_command(label="Authentication...", command=self._handle_auth)
         self.menu.add_separator()
@@ -144,10 +157,17 @@ class MainWindow:
         self.menu.add_command(label="Refresh List", command=lambda: self._refresh_list(force_refresh=True))
         self.menu.add_separator()
         self.menu.add_command(label="Options...", command=self._show_options)
+        # Add dark theme toggle
+        self.menu.add_separator()
+        self.menu.add_command(label="Toggle Dark Theme", command=self._toggle_dark_theme)
         # Add cache management to menu
         self.menu.add_separator()
         self.menu.add_command(label="Clear Cache", command=self._clear_cache)
         self.menu.add_command(label="Refresh Synonyms", command=self._refresh_synonyms)
+        self.menu.add_separator()
+        self.menu.add_command(label="View Logs", command=self._show_log_viewer)
+        self.menu.add_separator()
+        self.menu.add_command(label="Exit", command=self._exit_application)
         
         # User status
         user_frame = ttk.Frame(toolbar)
@@ -169,16 +189,23 @@ class MainWindow:
     
     def _create_compact_anime_info(self, parent):
         """Create a compact anime info panel in the toolbar"""
-        info_frame = ttk.LabelFrame(parent, text="Selected Anime")
+        info_frame = ttk.Frame(parent)
         info_frame.pack(side=tk.LEFT, padx=(0, 10), pady=2, ipadx=5, ipady=2)
-
-        # Anime name (shortened)
+        
+        # First row - Anime name only
+        name_row = ttk.Frame(info_frame)
+        name_row.pack(fill=tk.X, pady=(0, 2))
+        
         self.compact_anime_name_var = tk.StringVar(value="None")
-        name_label = ttk.Label(info_frame, textvariable=self.compact_anime_name_var, font=("Arial", 9, "bold"))
-        name_label.pack(side=tk.LEFT, padx=(2, 10))
+        name_label = ttk.Label(name_row, textvariable=self.compact_anime_name_var, font=("Segoe UI", 9, "bold"))
+        name_label.pack(side=tk.LEFT)
+        
+        # Second row - Controls
+        controls_row = ttk.Frame(info_frame)
+        controls_row.pack(fill=tk.X)
 
         # Progress control
-        progress_frame = ttk.Frame(info_frame)
+        progress_frame = ttk.Frame(controls_row)
         progress_frame.pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Label(progress_frame, text="Ep:").pack(side=tk.LEFT, padx=(0, 2))
@@ -196,7 +223,7 @@ class MainWindow:
         ttk.Label(progress_frame, textvariable=self.compact_total_episodes_var).pack(side=tk.LEFT, padx=(2, 0))
 
         # Status control (compact)
-        status_frame = ttk.Frame(info_frame)
+        status_frame = ttk.Frame(controls_row)
         status_frame.pack(side=tk.LEFT, padx=(10, 0))
 
         ttk.Label(status_frame, text="Status:").pack(side=tk.LEFT, padx=(0, 2))
@@ -209,7 +236,7 @@ class MainWindow:
         self.compact_status_combo.bind('<<ComboboxSelected>>', self._on_compact_status_changed)
 
         # Score control (compact)
-        score_frame = ttk.Frame(info_frame)
+        score_frame = ttk.Frame(controls_row)
         score_frame.pack(side=tk.LEFT, padx=(10, 0))
 
         ttk.Label(score_frame, text="Score:").pack(side=tk.LEFT, padx=(0, 2))
@@ -350,7 +377,7 @@ class MainWindow:
                 self._logout()
         else:
             # Show authentication dialog
-            auth_dialog = AuthDialog(self.root, self.config, self.shikimori)
+            auth_dialog = SimpleAuthDialog(self.root, self.config, self.shikimori)
             self.root.wait_window(auth_dialog.dialog)
             
             if self.config.is_authenticated:
@@ -430,7 +457,7 @@ class MainWindow:
                     self.root.after(0, lambda: self._refresh_list(force_refresh=True))
                     
             except Exception as e:
-                print(f"Error reloading from cache: {e}")
+                self.logger.error(f"Error reloading from cache: {e}")
                 # Fallback to full refresh on error
                 self.root.after(0, lambda: self._refresh_list(force_refresh=True))
         
@@ -685,8 +712,8 @@ class MainWindow:
             # Update compact panel
             name = anime.get('name', 'Unknown')
             # Truncate long names for compact display
-            if len(name) > 25:
-                display_name = name[:22] + "..."
+            if len(name) > 50:
+                display_name = name[:47] + "..."
             else:
                 display_name = name
             self.compact_anime_name_var.set(display_name)
@@ -1253,6 +1280,131 @@ class MainWindow:
             # Check if auto-start monitoring is enabled and we're logged in
             if self.config.get('monitoring.auto_start', False) and self.config.is_authenticated and not self.monitoring_active:
                 self._toggle_monitoring()
+    
+    def _toggle_dark_theme(self):
+        """Toggle between light and dark themes"""
+        # Get current theme state and toggle it
+        current_dark_theme = self.config.get('ui.dark_theme', False)
+        new_dark_theme = not current_dark_theme
+        
+        # Save the new preference
+        self.config.set('ui.dark_theme', new_dark_theme)
+        
+        # Apply the new theme
+        self.modern_style.switch_theme(new_dark_theme)
+        
+        # Update anime list highlighting for the new theme
+        if hasattr(self, 'anime_list_frame'):
+            self.anime_list_frame._configure_anime_status_tags()
+        
+        # Apply title bar theme with delay
+        self.root.after(100, self.modern_style._apply_title_bar_theme)
+        
+        # Update status
+        theme_name = "dark" if new_dark_theme else "light"
+        self._set_status(f"Switched to {theme_name} theme")
+    
+    def _show_log_viewer(self):
+        """Show log viewer window"""
+        try:
+            from utils.logger import get_log_file_path
+            log_file = get_log_file_path()
+            
+            # Create log viewer window
+            log_window = tk.Toplevel(self.root)
+            log_window.title("Application Logs")
+            log_window.geometry("800x600")
+            
+            # Apply modern styling
+            dark_theme = self.config.get('ui.dark_theme', False)
+            modern_style = ModernStyle(log_window, dark_theme=dark_theme)
+            
+            # Create main frame
+            main_frame = ttk.Frame(log_window, padding="10")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Log file path info
+            info_frame = ttk.Frame(main_frame)
+            info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(info_frame, text=f"Log file: {log_file}", font=("Arial", 9)).pack(anchor=tk.W)
+            
+            # Text widget with scrollbar
+            text_frame = ttk.Frame(main_frame)
+            text_frame.pack(fill=tk.BOTH, expand=True)
+            
+            text_widget = tk.Text(text_frame, wrap=tk.NONE, font=("Consolas", 9))
+            
+            # Scrollbars
+            v_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+            h_scrollbar = ttk.Scrollbar(text_frame, orient=tk.HORIZONTAL, command=text_widget.xview)
+            text_widget.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+            
+            # Pack widgets
+            text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            
+            # Load log content
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if content:
+                        text_widget.insert(tk.END, content)
+                        # Scroll to bottom
+                        text_widget.see(tk.END)
+                    else:
+                        text_widget.insert(tk.END, "Log file is empty.")
+            except FileNotFoundError:
+                text_widget.insert(tk.END, "Log file not found. No logs have been generated yet.")
+            except Exception as e:
+                text_widget.insert(tk.END, f"Error reading log file: {e}")
+            
+            text_widget.config(state=tk.DISABLED)
+            
+            # Buttons frame
+            buttons_frame = ttk.Frame(main_frame)
+            buttons_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            # Refresh button
+            def refresh_logs():
+                text_widget.config(state=tk.NORMAL)
+                text_widget.delete(1.0, tk.END)
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        if content:
+                            text_widget.insert(tk.END, content)
+                            text_widget.see(tk.END)
+                        else:
+                            text_widget.insert(tk.END, "Log file is empty.")
+                except Exception as e:
+                    text_widget.insert(tk.END, f"Error reading log file: {e}")
+                text_widget.config(state=tk.DISABLED)
+            
+            ttk.Button(buttons_frame, text="Refresh", command=refresh_logs).pack(side=tk.LEFT)
+            
+            # Open log folder button
+            def open_log_folder():
+                import os
+                import subprocess
+                log_dir = os.path.dirname(log_file)
+                try:
+                    subprocess.Popen(f'explorer "{log_dir}"')
+                except Exception as e:
+                    messagebox.showerror("Error", f"Could not open log folder: {e}")
+            
+            ttk.Button(buttons_frame, text="Open Log Folder", command=open_log_folder).pack(side=tk.LEFT, padx=(10, 0))
+            
+            # Close button
+            ttk.Button(buttons_frame, text="Close", command=log_window.destroy).pack(side=tk.RIGHT)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open log viewer: {e}")
+    
+    def _exit_application(self):
+        """Exit the application completely"""
+        self._actually_close()
     
     def _update_single_anime(self, anime_entry: Dict[str, Any]):
         """Update a single anime entry in the local data and refresh only that item"""

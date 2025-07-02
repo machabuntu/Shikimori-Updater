@@ -26,12 +26,19 @@ def setup_path():
 
 setup_path()
 
+# Initialize logging first
+from utils.logger import get_logger
+logger = get_logger('main')
+
 from gui.main_window import MainWindow
 from core.config import Config
 
 def main():
     """Main application entry point"""
     try:
+        # Test logging
+        logger.info("Starting Shikimori Updater application")
+        
         # Initialize configuration
         config = Config()
         

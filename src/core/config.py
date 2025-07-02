@@ -21,8 +21,8 @@ class Config:
         # Default configuration
         self.default_config = {
             "shikimori": {
-                "client_id": "",
-                "client_secret": "",
+                "client_id": "Mf86jr7hvlSRXHy0yNTqUi8kxQgYiB-7whXD1JVYI60",
+                "client_secret": "hcTpGGUHEpW7-aIU4L6y8sqwsoLXcPY58ttHwWAGzb8",
                 "access_token": None,
                 "refresh_token": None,
                 "user_id": None
