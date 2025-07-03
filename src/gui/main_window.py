@@ -57,6 +57,10 @@ class MainWindow:
         from utils.notification_manager import NotificationManager
         self.notification_manager = NotificationManager(config, self.shikimori, self.cache_manager)
         
+        # Initialize Telegram notifier
+        from utils.telegram_notifier import TelegramNotifier
+        self.telegram_notifier = TelegramNotifier(config)
+        
         # Data
         self.current_user = None
         self.anime_list_data: Dict[str, List[Dict[str, Any]]] = {}
@@ -674,6 +678,30 @@ class MainWindow:
                             if self.current_user:
                                 self.cache_manager.save_anime_list(self.current_user['id'], self.anime_list_data)
                             
+                            # Send Telegram notification for scrobbling update
+                            if self.current_user:
+                                username = self.current_user.get('nickname', 'Unknown')
+                                anime_url = anime_data.get('url', '')
+                                
+                                if new_status == 'completed':
+                                    # Check if this is a rewatch completion
+                                    old_status = anime_entry.get('status', '')
+                                    is_rewatch = old_status == 'rewatching'
+                                    rewatch_count = 0
+                                    
+                                    if is_rewatch:
+                                        # Get current rewatch count (this would be updated by the API call)
+                                        rewatch_count = anime_entry.get('rewatches', 0) + 1
+                                    
+                                    
+                                    # Send completion notification
+                                    score = anime_entry.get('score', 0)
+                                    self.telegram_notifier.send_completion_update(anime_name, score, username, is_rewatch, rewatch_count, anime_url)
+                                else:
+                                    # Send progress notification
+                                    total_episodes = anime_data.get('episodes', 0)
+                                    self.telegram_notifier.send_progress_update(anime_name, target_episode, total_episodes, username, anime_url)
+                            
                             self.root.after(0, lambda: self._update_single_anime(anime_entry))
                         else:
                             self.root.after(0, lambda: self._set_status(
@@ -951,12 +979,31 @@ class MainWindow:
                     
                     self.root.after(0, lambda: self._set_status(message))
                     
+                    # Send Telegram notification for rewatch completion
+                    if self.current_user and new_status == 'completed' and rewatches_increment > 0:
+                        username = self.current_user.get('nickname', 'Unknown')
+                        anime_url = anime_entry['anime'].get('url', '')
+                        score = anime_entry.get('score', 0)
+                        
+                        # Send immediate rewatch notification with incremented count
+                        # The cache will be updated by the _update_cache_and_reload call below
+                        current_rewatches = anime_entry.get('rewatches', 0) or 0
+                        new_rewatch_count = current_rewatches + rewatches_increment
+                        
+                        self.telegram_notifier.send_completion_update(
+                            anime_name, score, username, True, new_rewatch_count, anime_url
+                        )
+                    
                     # Update cache directly and reload from cache
                     if self.current_user:
                         anime_id = anime_entry['id']
                         update_data = {'episodes': episodes}
                         if new_status:
                             update_data['status'] = new_status
+                        if rewatches_increment > 0:
+                            # Also update rewatch count in cache
+                            current_rewatches = anime_entry.get('rewatches', 0) or 0
+                            update_data['rewatches'] = current_rewatches + rewatches_increment
                         
                         # Update cache and reload
                         self._update_cache_and_reload(anime_id, update_data)
@@ -981,19 +1028,43 @@ class MainWindow:
                 rate_id = self.selected_anime['id']
                 anime_name = self.selected_anime['anime'].get('name', 'Unknown')
                 
+                # Check if should auto-complete when score is set
+                current_episodes = self.selected_anime.get('episodes', 0)
+                total_episodes = self.selected_anime['anime'].get('episodes', 0)
+                current_status = self.selected_anime.get('status', '')
+                new_status = None
+                
+                # Auto-complete if score is being set and episodes are at max
+                if score > 0 and total_episodes > 0 and current_episodes >= total_episodes and current_status != 'completed':
+                    new_status = 'completed'
+                
                 success = self.shikimori.update_anime_progress(
-                    rate_id, episodes=self.selected_anime.get('episodes', 0), score=score)
+                    rate_id, episodes=current_episodes, score=score, status=new_status)
                 
                 if success:
                     if score > 0:
-                        self.root.after(0, lambda: self._set_status(f"Set {anime_name} score to {score}"))
+                        message = f"Set {anime_name} score to {score}"
+                        if new_status == 'completed':
+                            message += " (Auto-completed)"
+                        self.root.after(0, lambda: self._set_status(message))
                     else:
                         self.root.after(0, lambda: self._set_status(f"Removed score for {anime_name}"))
+                    
+                    # Send Telegram notification for auto-completion
+                    if self.current_user and new_status == 'completed':
+                        username = self.current_user.get('nickname', 'Unknown')
+                        anime_url = self.selected_anime['anime'].get('url', '')
+                        self.telegram_notifier.send_completion_update(
+                            anime_name, score, username, False, 0, anime_url
+                        )
                     
                     # Update cache directly and reload from cache
                     if self.current_user:
                         anime_id = self.selected_anime['id']
-                        self._update_cache_and_reload(anime_id, {'score': score})
+                        update_data = {'score': score}
+                        if new_status:
+                            update_data['status'] = new_status
+                        self._update_cache_and_reload(anime_id, update_data)
                 else:
                     self.root.after(0, lambda: self._set_status(f"Failed to update {anime_name} score"))
                     # Reset to previous value
@@ -1115,10 +1186,10 @@ class MainWindow:
         
         # Convert status display back to API key
         status_map = {v: k for k, v in self.shikimori.STATUSES.items()}
-        new_status = status_map.get(status_text)
+        new_status_key = status_map.get(status_text)
         
-        if new_status:
-            self._update_status(new_status)
+        if new_status_key:
+            self._update_status(new_status_key)
     
     def _update_status(self, status: str):
         """Update anime status on Shikimori"""
@@ -1144,6 +1215,29 @@ class MainWindow:
                     if status == 'rewatching':
                         message += " (episodes reset to 0)"
                     self.root.after(0, lambda: self._set_status(message))
+                    
+                    # Send Telegram notification for manual status changes
+                    if self.current_user:
+                        username = self.current_user.get('nickname', 'Unknown')
+                        old_status = self.selected_anime.get('status', '')
+                        old_status_display = self.shikimori.STATUSES.get(old_status, old_status)
+                        score = self.selected_anime.get('score', 0)
+                        anime_url = self.selected_anime['anime'].get('url', '')
+                        
+                        if status in ['dropped', 'rewatching']:
+                            self.telegram_notifier.send_status_change_update(
+                                anime_name, old_status_display, status, score, username, anime_url
+                            )
+                        elif status == 'completed':
+                            # Check if this is completing from rewatching
+                            is_rewatch = old_status == 'rewatching'
+                            rewatch_count = 0
+                            if is_rewatch:
+                                rewatch_count = self.selected_anime.get('rewatches', 0) + 1
+                            
+                            self.telegram_notifier.send_completion_update(
+                                anime_name, score, username, is_rewatch, rewatch_count, anime_url
+                            )
                     
                     # Update cache directly and reload from cache
                     if self.current_user:
@@ -1200,6 +1294,7 @@ class MainWindow:
                     self.root.after(0, lambda: self._refresh_list(force_refresh=True))
         
         threading.Thread(target=update_and_reload, daemon=True).start()
+    
     
     def _setup_system_tray(self):
         """Setup system tray icon and menu"""

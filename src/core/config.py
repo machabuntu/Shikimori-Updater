@@ -37,6 +37,13 @@ class Config:
                 "height": 700,
                 "x": None,
                 "y": None
+            },
+            "telegram": {
+                "enabled": False,
+                "bot_token": "",
+                "chat_id": "",
+                "send_progress": False,
+                "send_completed": True
             }
         }
         

@@ -230,17 +230,10 @@ class PlayerMonitor:
         if not player_info.file_path:
             return
         
-        # Calculate watch time
+        # Just remove from tracking without triggering scrobbling
+        # Scrobbling should only happen on timer, not when player closes
         start_time = self.watched_episodes.get(player_info.file_path)
         if start_time:
-            watch_time = time.time() - start_time
-            
-            # If watched for minimum time, trigger callback
-            if watch_time >= self.min_watch_time:
-                episode_info = self._parse_episode_info(player_info)
-                if episode_info and self.on_episode_watched:
-                    self.on_episode_watched(episode_info, watch_time)
-            
             # Remove from tracking
             del self.watched_episodes[player_info.file_path]
             # Remove from updated episodes set

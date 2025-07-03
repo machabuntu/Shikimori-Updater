@@ -52,92 +52,19 @@ class OptionsDialog:
         main_frame = ttk.Frame(self.dialog, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Startup options
-        startup_frame = ttk.LabelFrame(main_frame, text="Startup Options", padding="10")
-        startup_frame.pack(fill=tk.X, pady=(0, 15))
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
         
-        # Add to Windows startup
-        self.startup_var = tk.BooleanVar()
-        startup_check = ttk.Checkbutton(startup_frame, text="Add application to Windows startup",
-                                       variable=self.startup_var)
-        startup_check.pack(anchor=tk.W, pady=(0, 5))
+        # Main settings tab
+        self.main_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.main_tab, text="Main")
+        self._create_main_tab()
         
-        # Enable scrobbling by default
-        self.auto_monitor_var = tk.BooleanVar()
-        auto_monitor_check = ttk.Checkbutton(startup_frame, text="Enable scrobbling by default on start",
-                                            variable=self.auto_monitor_var)
-        auto_monitor_check.pack(anchor=tk.W)
-        
-        # Scrobbling options
-        monitor_frame = ttk.LabelFrame(main_frame, text="Scrobbling Options", padding="10")
-        monitor_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Watch time setting
-        watch_time_frame = ttk.Frame(monitor_frame)
-        watch_time_frame.pack(fill=tk.X)
-        
-        ttk.Label(watch_time_frame, text="Update anime progress after:").pack(side=tk.LEFT)
-        
-        self.watch_time_var = tk.IntVar()
-        watch_time_spin = ttk.Spinbox(watch_time_frame, textvariable=self.watch_time_var,
-                                     from_=1, to=60, width=5)
-        watch_time_spin.pack(side=tk.LEFT, padx=(10, 5))
-        
-        ttk.Label(watch_time_frame, text="minutes").pack(side=tk.LEFT)
-        
-        # System Tray options
-        tray_frame = ttk.LabelFrame(main_frame, text="System Tray Options", padding="10")
-        tray_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Minimize to tray
-        self.minimize_to_tray_var = tk.BooleanVar()
-        minimize_tray_check = ttk.Checkbutton(tray_frame, text="Minimize to system tray instead of taskbar",
-                                            variable=self.minimize_to_tray_var)
-        minimize_tray_check.pack(anchor=tk.W, pady=(0, 5))
-        
-        # Close to tray
-        self.close_to_tray_var = tk.BooleanVar()
-        close_tray_check = ttk.Checkbutton(tray_frame, text="Close to system tray instead of exiting",
-                                         variable=self.close_to_tray_var)
-        close_tray_check.pack(anchor=tk.W)
-        
-        # Add note about dependencies
-        try:
-            import pystray
-            from PIL import Image
-        except ImportError:
-            note_label = ttk.Label(tray_frame, text="Note: Install 'pystray' and 'pillow' packages for tray functionality", 
-                                 foreground="orange", font=("Arial", 8))
-            note_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        # Notification options
-        notification_frame = ttk.LabelFrame(main_frame, text="Notification Options", padding="10")
-        notification_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Episode notifications
-        self.episode_notifications_var = tk.BooleanVar()
-        episode_check = ttk.Checkbutton(notification_frame, 
-                                       text="Notify when new episodes are available for watching anime",
-                                       variable=self.episode_notifications_var)
-        episode_check.pack(anchor=tk.W, pady=(0, 5))
-        
-        # Release notifications
-        self.release_notifications_var = tk.BooleanVar()
-        release_check = ttk.Checkbutton(notification_frame, 
-                                      text="Notify when planned anime are fully released",
-                                      variable=self.release_notifications_var)
-        release_check.pack(anchor=tk.W)
-        
-        # Add note about notification dependencies
-        try:
-            from utils.notification_service import NotificationService
-            if not NotificationService.is_available():
-                note_label = ttk.Label(notification_frame, 
-                                     text="Note: Install 'win10toast' or 'plyer' for better notifications", 
-                                     foreground="orange", font=("Arial", 8))
-                note_label.pack(anchor=tk.W, pady=(5, 0))
-        except ImportError:
-            pass
+        # Notifications tab
+        self.notifications_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.notifications_tab, text="Notifications")
+        self._create_notifications_tab()
         
         # Load current values
         self._load_current_values()
@@ -171,6 +98,16 @@ class OptionsDialog:
         # Notification settings
         self.episode_notifications_var.set(self.config.get('notifications.episode_notifications', False))
         self.release_notifications_var.set(self.config.get('notifications.release_notifications', False))
+        
+        # Telegram settings
+        self.telegram_enabled_var.set(self.config.get('telegram.enabled', False))
+        self.telegram_token_var.set(self.config.get('telegram.bot_token', ''))
+        self.telegram_chat_id_var.set(self.config.get('telegram.chat_id', ''))
+        self.telegram_send_progress_var.set(self.config.get('telegram.send_progress', False))
+        self.telegram_send_completed_var.set(self.config.get('telegram.send_completed', True))
+        
+        # Update telegram controls state
+        self._toggle_telegram_controls(self.telegram_enabled_var.get())
     
     def _is_in_startup(self):
         """Check if application is in Windows startup"""
@@ -252,6 +189,13 @@ class OptionsDialog:
             self.config.set('notifications.episode_notifications', self.episode_notifications_var.get())
             self.config.set('notifications.release_notifications', self.release_notifications_var.get())
             
+            # Save Telegram settings
+            self.config.set('telegram.enabled', self.telegram_enabled_var.get())
+            self.config.set('telegram.bot_token', self.telegram_token_var.get())
+            self.config.set('telegram.chat_id', self.telegram_chat_id_var.get())
+            self.config.set('telegram.send_progress', self.telegram_send_progress_var.get())
+            self.config.set('telegram.send_completed', self.telegram_send_completed_var.get())
+            
             self.changes_made = True
             messagebox.showinfo("Success", "Settings saved successfully!")
             self.dialog.destroy()
@@ -304,3 +248,193 @@ class OptionsDialog:
         except Exception:
             # Fallback positioning
             pass
+    
+    def _create_main_tab(self):
+        """Create main settings tab"""
+        # Startup options
+        startup_frame = ttk.LabelFrame(self.main_tab, text="Startup Options", padding="10")
+        startup_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Add to Windows startup
+        self.startup_var = tk.BooleanVar()
+        startup_check = ttk.Checkbutton(startup_frame, text="Add application to Windows startup",
+                                       variable=self.startup_var)
+        startup_check.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Enable scrobbling by default
+        self.auto_monitor_var = tk.BooleanVar()
+        auto_monitor_check = ttk.Checkbutton(startup_frame, text="Enable scrobbling by default on start",
+                                            variable=self.auto_monitor_var)
+        auto_monitor_check.pack(anchor=tk.W)
+        
+        # Scrobbling options
+        monitor_frame = ttk.LabelFrame(self.main_tab, text="Scrobbling Options", padding="10")
+        monitor_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Watch time setting
+        watch_time_frame = ttk.Frame(monitor_frame)
+        watch_time_frame.pack(fill=tk.X)
+        
+        ttk.Label(watch_time_frame, text="Update anime progress after:").pack(side=tk.LEFT)
+        
+        self.watch_time_var = tk.IntVar()
+        watch_time_spin = ttk.Spinbox(watch_time_frame, textvariable=self.watch_time_var,
+                                     from_=1, to=60, width=5)
+        watch_time_spin.pack(side=tk.LEFT, padx=(10, 5))
+        
+        ttk.Label(watch_time_frame, text="minutes").pack(side=tk.LEFT)
+        
+        # System Tray options
+        tray_frame = ttk.LabelFrame(self.main_tab, text="System Tray Options", padding="10")
+        tray_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Minimize to tray
+        self.minimize_to_tray_var = tk.BooleanVar()
+        minimize_tray_check = ttk.Checkbutton(tray_frame, text="Minimize to system tray instead of taskbar",
+                                            variable=self.minimize_to_tray_var)
+        minimize_tray_check.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Close to tray
+        self.close_to_tray_var = tk.BooleanVar()
+        close_tray_check = ttk.Checkbutton(tray_frame, text="Close to system tray instead of exiting",
+                                         variable=self.close_to_tray_var)
+        close_tray_check.pack(anchor=tk.W)
+        
+        # Add note about dependencies
+        try:
+            import pystray
+            from PIL import Image
+        except ImportError:
+            note_label = ttk.Label(tray_frame, text="Note: Install 'pystray' and 'pillow' packages for tray functionality", 
+                                 foreground="orange", font=("Arial", 8))
+            note_label.pack(anchor=tk.W, pady=(5, 0))
+    
+    def _create_notifications_tab(self):
+        """Create notifications settings tab"""
+        # Desktop notification options
+        desktop_frame = ttk.LabelFrame(self.notifications_tab, text="Desktop Notifications", padding="10")
+        desktop_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Episode notifications
+        self.episode_notifications_var = tk.BooleanVar()
+        episode_check = ttk.Checkbutton(desktop_frame, 
+                                       text="Notify when new episodes are available for watching anime",
+                                       variable=self.episode_notifications_var)
+        episode_check.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Release notifications
+        self.release_notifications_var = tk.BooleanVar()
+        release_check = ttk.Checkbutton(desktop_frame, 
+                                      text="Notify when planned anime are fully released",
+                                      variable=self.release_notifications_var)
+        release_check.pack(anchor=tk.W)
+        
+        # Add note about notification dependencies
+        try:
+            from utils.notification_service import NotificationService
+            if not NotificationService.is_available():
+                note_label = ttk.Label(desktop_frame, 
+                                     text="Note: Install 'win10toast' or 'plyer' for better notifications", 
+                                     foreground="orange", font=("Arial", 8))
+                note_label.pack(anchor=tk.W, pady=(5, 0))
+        except ImportError:
+            pass
+        
+        # Telegram notifications
+        telegram_frame = ttk.LabelFrame(self.notifications_tab, text="Telegram Notifications", padding="10")
+        telegram_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Enable telegram notifications
+        self.telegram_enabled_var = tk.BooleanVar()
+        telegram_check = ttk.Checkbutton(telegram_frame, text="Enable Telegram notifications",
+                                        variable=self.telegram_enabled_var,
+                                        command=self._on_telegram_enabled_changed)
+        telegram_check.pack(anchor=tk.W, pady=(0, 10))
+        
+        # Bot token
+        token_frame = ttk.Frame(telegram_frame)
+        token_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(token_frame, text="Bot Token:").pack(anchor=tk.W)
+        self.telegram_token_var = tk.StringVar()
+        self.telegram_token_entry = ttk.Entry(token_frame, textvariable=self.telegram_token_var, 
+                                             show="*", width=50)
+        self.telegram_token_entry.pack(fill=tk.X, pady=(2, 0))
+        
+        # Chat ID
+        chat_frame = ttk.Frame(telegram_frame)
+        chat_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(chat_frame, text="Channel/Chat ID:").pack(anchor=tk.W)
+        self.telegram_chat_id_var = tk.StringVar()
+        self.telegram_chat_id_entry = ttk.Entry(chat_frame, textvariable=self.telegram_chat_id_var, width=50)
+        self.telegram_chat_id_entry.pack(fill=tk.X, pady=(2, 0))
+        
+        # Test connection button
+        test_frame = ttk.Frame(telegram_frame)
+        test_frame.pack(fill=tk.X, pady=(5, 10))
+        
+        self.test_button = ttk.Button(test_frame, text="Test Connection", command=self._test_telegram_connection)
+        self.test_button.pack(side=tk.LEFT)
+        
+        # Filter options
+        filter_frame = ttk.LabelFrame(telegram_frame, text="Send Notifications For:", padding="5")
+        filter_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.telegram_send_progress_var = tk.BooleanVar()
+        progress_check = ttk.Checkbutton(filter_frame, text="Any positive progress change",
+                                       variable=self.telegram_send_progress_var)
+        progress_check.pack(anchor=tk.W)
+        
+        self.telegram_send_completed_var = tk.BooleanVar()
+        completed_check = ttk.Checkbutton(filter_frame, text="Only completed anime",
+                                        variable=self.telegram_send_completed_var)
+        completed_check.pack(anchor=tk.W)
+        
+        # Info label
+        info_label = ttk.Label(telegram_frame, 
+                             text="Note: Only scrobbling updates will be sent, not manual updates.",
+                             foreground="gray", font=("Arial", 8))
+        info_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Initially disable telegram controls
+        self._toggle_telegram_controls(False)
+    
+    def _on_telegram_enabled_changed(self):
+        """Handle telegram enabled checkbox change"""
+        enabled = self.telegram_enabled_var.get()
+        self._toggle_telegram_controls(enabled)
+    
+    def _toggle_telegram_controls(self, enabled: bool):
+        """Enable or disable telegram controls"""
+        state = tk.NORMAL if enabled else tk.DISABLED
+        
+        self.telegram_token_entry.config(state=state)
+        self.telegram_chat_id_entry.config(state=state)
+        self.test_button.config(state=state)
+    
+    def _test_telegram_connection(self):
+        """Test Telegram bot connection"""
+        # Temporarily save telegram settings to config for testing
+        old_enabled = self.config.get('telegram.enabled', False)
+        old_token = self.config.get('telegram.bot_token', '')
+        
+        self.config.set('telegram.enabled', True)
+        self.config.set('telegram.bot_token', self.telegram_token_var.get())
+        
+        try:
+            from utils.telegram_notifier import TelegramNotifier
+            notifier = TelegramNotifier(self.config)
+            success, message = notifier.test_connection()
+            
+            if success:
+                messagebox.showinfo("Connection Test", f"✅ {message}")
+            else:
+                messagebox.showerror("Connection Test", f"❌ {message}")
+                
+        except Exception as e:
+            messagebox.showerror("Connection Test", f"❌ Error: {str(e)}")
+        finally:
+            # Restore old settings
+            self.config.set('telegram.enabled', old_enabled)
+            self.config.set('telegram.bot_token', old_token)
