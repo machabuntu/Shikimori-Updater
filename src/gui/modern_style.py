@@ -385,11 +385,26 @@ class ModernStyle:
                            focuscolor='none',
                            font=('Segoe UI', 9))
         
+        # Configure checkbutton hover states with theme-appropriate colors
+        hover_bg = self.COLORS['surface'] if self.dark_theme else self.COLORS['accent_light']
+        self.style.map('TCheckbutton',
+                      background=[('active', hover_bg),
+                                ('!active', self.COLORS['bg_primary'])],
+                      foreground=[('active', self.COLORS['text_primary']),
+                                ('!active', self.COLORS['text_primary'])])
+        
         self.style.configure('TRadiobutton',
                            background=self.COLORS['bg_primary'],
                            foreground=self.COLORS['text_primary'],
                            focuscolor='none',
                            font=('Segoe UI', 9))
+        
+        # Configure radiobutton hover states with theme-appropriate colors
+        self.style.map('TRadiobutton',
+                      background=[('active', hover_bg),
+                                ('!active', self.COLORS['bg_primary'])],
+                      foreground=[('active', self.COLORS['text_primary']),
+                                ('!active', self.COLORS['text_primary'])])
         
         # Configure Menubutton
         self.style.configure('TMenubutton',
