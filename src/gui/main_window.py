@@ -669,6 +669,11 @@ class MainWindow:
                             anime_entry['episodes'] = target_episode
                             if new_status:
                                 anime_entry['status'] = new_status
+                            
+                            # Update cache with the modified data
+                            if self.current_user:
+                                self.cache_manager.save_anime_list(self.current_user['id'], self.anime_list_data)
+                            
                             self.root.after(0, lambda: self._update_single_anime(anime_entry))
                         else:
                             self.root.after(0, lambda: self._set_status(
