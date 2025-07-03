@@ -68,6 +68,7 @@ class MainWindow:
         self.monitoring_active = False
         self.tray_icon = None
         self.window_minimized = False
+        self.updated_anime_episodes = set()  # Track which anime episodes have been updated
         
         # Setup window
         self._setup_window()
@@ -569,6 +570,9 @@ class MainWindow:
         # Save to cache
         self.cache_manager.save_anime_list(user_id, self.anime_list_data)
         
+        # Clear episode tracking since anime progress might have changed
+        self.updated_anime_episodes.clear()
+        
         # Update UI on main thread
         self.root.after(0, lambda: self.anime_list_frame.update_list(self.anime_list_data))
         self.root.after(0, lambda: self._set_status(f"Anime list updated - {total_anime} anime loaded"))
@@ -607,6 +611,8 @@ class MainWindow:
         else:
             self.player_monitor.start_monitoring()
             self.monitoring_active = True
+            # Clear episode tracking when starting monitoring
+            self.updated_anime_episodes.clear()
         
         # Update window title with new monitoring status
         self._update_window_title()
@@ -642,8 +648,15 @@ class MainWindow:
                     current_episodes = anime_entry.get('episodes', 0)
                     target_episode = episode_info.episode_number
                     
-                    # Allow update if episode is next (+1) or if we want to allow re-watching same episode
-                    if target_episode == current_episodes + 1 or target_episode == current_episodes:
+                    # Check if this episode has already been updated for this anime
+                    anime_id = anime_entry['id']
+                    episode_key = f"{anime_id}_{target_episode}"
+                    
+                    # Allow update if episode is next (+1) or if current episode but not yet updated
+                    already_updated = hasattr(self, 'updated_anime_episodes') and episode_key in self.updated_anime_episodes
+                    
+                    if (target_episode == current_episodes + 1 or 
+                        (target_episode == current_episodes and not already_updated)):
                         # Update progress
                         rate_id = anime_entry['id']
                         anime_data = anime_entry['anime']
@@ -668,6 +681,9 @@ class MainWindow:
                                 message += " (Completed)"
                             
                             self.root.after(0, lambda: self._set_status(message))
+                            # Mark this episode as updated
+                            self.updated_anime_episodes.add(episode_key)
+                            
                             # Update only this specific anime in the list instead of full refresh
                             # Update the local data first
                             anime_entry['episodes'] = target_episode
@@ -709,7 +725,7 @@ class MainWindow:
                                 f"Failed to update {episode_info.anime_name}"))
                     else:
                         self.root.after(0, lambda: self._set_status(
-                            f"Episode {target_episode} is not next for {episode_info.anime_name}"))
+                            f"Episode {target_episode} is not next for {episode_info.anime_name} (current: {current_episodes})"))
                 else:
                     self.root.after(0, lambda: self._set_status(
                         f"No match found for {episode_info.anime_name}"))
