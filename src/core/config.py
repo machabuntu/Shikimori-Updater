@@ -43,7 +43,9 @@ class Config:
                 "bot_token": "",
                 "chat_id": "",
                 "send_progress": False,
-                "send_completed": True
+                "send_completed": True,
+                "send_dropped": False,
+                "send_rewatching": False
             }
         }
         

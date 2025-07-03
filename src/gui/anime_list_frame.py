@@ -193,14 +193,13 @@ class AnimeListFrame(ttk.Frame):
         self.context_menu = tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="Open on Shikimori", command=self._open_on_shikimori)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="Edit", command=self._edit_anime)
+        self.context_menu.add_command(label="Mark as Watching", command=lambda: self._change_status_via_main_window("watching"))
+        self.context_menu.add_command(label="Mark as Completed", command=lambda: self._change_status_via_main_window("completed"))
+        self.context_menu.add_command(label="Mark as On Hold", command=lambda: self._change_status_via_main_window("on_hold"))
+        self.context_menu.add_command(label="Mark as Dropped", command=lambda: self._change_status_via_main_window("dropped"))
+        self.context_menu.add_command(label="Mark as Rewatching", command=lambda: self._change_status_via_main_window("rewatching"))
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="Update Progress", command=self._update_progress)
-        self.context_menu.add_command(label="Set Score", command=self._set_score)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Mark as Completed", command=lambda: self._change_status("completed"))
-        self.context_menu.add_command(label="Mark as Watching", command=lambda: self._change_status("watching"))
-        self.context_menu.add_command(label="Mark as Dropped", command=lambda: self._change_status("dropped"))
+        self.context_menu.add_command(label="Add Comment", command=self._add_comment)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Remove from List", command=self._remove_anime)
     
@@ -577,6 +576,23 @@ class AnimeListFrame(ttk.Frame):
         
         self._update_anime_data(anime_entry, status=new_status)
     
+    def _change_status_via_main_window(self, new_status: str):
+        """Change status using main window's mechanism (includes proper notifications)"""
+        anime_entry = self._get_selected_anime()
+        if not anime_entry:
+            return
+        
+        # Set the anime as selected in main window and trigger status change
+        self.main_window.set_selected_anime(anime_entry)
+        
+        # Update the compact status combo to the new status for proper UI update
+        if new_status in self.main_window.shikimori.STATUSES:
+            status_display = self.main_window.shikimori.STATUSES[new_status]
+            self.main_window.compact_status_var.set(status_display)
+        
+        # Trigger the main window's status update method
+        self.main_window._update_status(new_status)
+    
     def _remove_anime(self):
         """Remove selected anime from list"""
         anime_entry = self._get_selected_anime()
@@ -615,7 +631,19 @@ class AnimeListFrame(ttk.Frame):
                     rate_id, **updates)
                 
                 if success:
-                    self.after(0, lambda: messagebox.showinfo("Success", f"'{anime_name}' updated successfully"))
+                    # Check if this is a comment update and send telegram notification
+                    if 'text' in updates or 'text_html' in updates:
+                        comment_text = updates.get('text', '') or updates.get('text_html', '')
+                        if comment_text and hasattr(self.main_window, 'telegram_notifier'):
+                            username = getattr(self.main_window, 'current_user', {}).get('nickname', 'Unknown')
+                            anime_url = anime_entry['anime'].get('url', '')
+                            self.main_window.telegram_notifier.send_comment_update(
+                                anime_name, comment_text, username, anime_url
+                            )
+                    else:
+                        # Only show popup for non-comment updates
+                        self.after(0, lambda: messagebox.showinfo("Success", f"'{anime_name}' updated successfully"))
+                    
                     # Update cache directly and reload from cache
                     anime_id = anime_entry['id']
                     self.after(0, lambda: self.main_window._update_cache_and_reload(anime_id, updates))
@@ -626,6 +654,31 @@ class AnimeListFrame(ttk.Frame):
                 self.after(0, lambda: messagebox.showerror("Error", f"Error updating anime: {str(e)}"))
         
         threading.Thread(target=update_data, daemon=True).start()
+    
+    def _add_comment(self):
+        """Add comment to selected anime"""
+        anime_entry = self._get_selected_anime()
+        if not anime_entry:
+            return
+        
+        anime_name = anime_entry['anime'].get('name', 'Unknown')
+        current_comment = anime_entry.get('text', '') or anime_entry.get('text_html', '')
+        
+        # Create comment dialog
+        dialog = CommentDialog(self, anime_name, current_comment)
+        self.wait_window(dialog.dialog)
+        
+        # If comment was saved, update the anime
+        if dialog.comment_saved and dialog.comment_text is not None:
+            comment_text = dialog.comment_text.strip()
+            
+            # Update both text and text_html fields
+            updates = {
+                'text': comment_text,
+                'text_html': comment_text  # For now, store same text in both fields
+            }
+            
+            self._update_anime_data(anime_entry, **updates)
     
     def _open_on_shikimori(self):
         """Open selected anime on Shikimori website"""
@@ -810,3 +863,109 @@ class AnimeEditDialog:
                 self.dialog.after(0, lambda: messagebox.showerror("Error", f"Error updating anime: {str(e)}"))
         
         threading.Thread(target=update_anime, daemon=True).start()
+
+
+class CommentDialog:
+    """Dialog for adding/editing comments"""
+    
+    def __init__(self, parent, anime_name, current_comment=""):
+        self.parent = parent
+        self.anime_name = anime_name
+        self.current_comment = current_comment
+        self.comment_saved = False
+        self.comment_text = None
+        
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(f"Comment - {anime_name}")
+        self.dialog.geometry("500x100")  # Start small, will be resized dynamically
+        self.dialog.resizable(False, False)
+        
+        # Make dialog modal
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self._center_dialog()
+        
+        self._create_widgets()
+        
+        # Calculate and set dynamic height after all content is added
+        self.dialog.after(1, self._set_dynamic_height)
+    
+    def _center_dialog(self):
+        """Center dialog on parent"""
+        self.dialog.update_idletasks()
+        x = self.parent.winfo_rootx() + (self.parent.winfo_width() - 500) // 2
+        y = self.parent.winfo_rooty() + (self.parent.winfo_height() - 400) // 2
+        self.dialog.geometry(f"500x400+{x}+{y}")
+    
+    def _create_widgets(self):
+        """Create dialog widgets"""
+        main_frame = ttk.Frame(self.dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text=f"Comment for: {self.anime_name}", 
+                               font=("Arial", 12, "bold"))
+        title_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        # Text area with scrollbar
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.text_widget = tk.Text(text_frame, wrap=tk.WORD, width=60, height=15)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.text_widget.yview)
+        self.text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        self.text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Insert current comment
+        if self.current_comment:
+            self.text_widget.insert(tk.END, self.current_comment)
+        
+        # Buttons
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(buttons_frame, text="Save", command=self._save_comment).pack(side=tk.RIGHT, padx=(10, 0))
+        ttk.Button(buttons_frame, text="Cancel", command=self.dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons_frame, text="Clear", command=self._clear_comment).pack(side=tk.LEFT)
+        
+        # Focus on text widget
+        self.text_widget.focus_set()
+    
+    def _save_comment(self):
+        """Save the comment"""
+        self.comment_text = self.text_widget.get("1.0", tk.END).strip()
+        self.comment_saved = True
+        self.dialog.destroy()
+    
+    def _clear_comment(self):
+        """Clear the comment text"""
+        self.text_widget.delete("1.0", tk.END)
+    
+    def _set_dynamic_height(self):
+        """Calculate and set dynamic height based on content"""
+        try:
+            # Update all widgets to get accurate measurements
+            self.dialog.update_idletasks()
+            
+            # Get the required height of the main frame
+            main_frame = self.dialog.winfo_children()[0]  # First child is main_frame
+            required_height = main_frame.winfo_reqheight() + 40  # Add padding
+            
+            # Set minimum height and maximum height
+            min_height = 300
+            max_height = 600
+            final_height = max(min_height, min(max_height, required_height))
+            
+            # Update geometry with new height
+            x = self.parent.winfo_rootx() + (self.parent.winfo_width() - 500) // 2
+            y = self.parent.winfo_rooty() + (self.parent.winfo_height() - final_height) // 2
+            self.dialog.geometry(f"500x{final_height}+{x}+{y}")
+            
+        except Exception as e:
+            # Fallback to fixed height if calculation fails
+            print(f"Error calculating dynamic height: {e}")
+            self.dialog.geometry("500x400")

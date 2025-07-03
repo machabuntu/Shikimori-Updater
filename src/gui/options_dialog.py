@@ -105,6 +105,8 @@ class OptionsDialog:
         self.telegram_chat_id_var.set(self.config.get('telegram.chat_id', ''))
         self.telegram_send_progress_var.set(self.config.get('telegram.send_progress', False))
         self.telegram_send_completed_var.set(self.config.get('telegram.send_completed', True))
+        self.telegram_send_dropped_var.set(self.config.get('telegram.send_dropped', False))
+        self.telegram_send_rewatching_var.set(self.config.get('telegram.send_rewatching', False))
         
         # Update telegram controls state
         self._toggle_telegram_controls(self.telegram_enabled_var.get())
@@ -195,6 +197,8 @@ class OptionsDialog:
             self.config.set('telegram.chat_id', self.telegram_chat_id_var.get())
             self.config.set('telegram.send_progress', self.telegram_send_progress_var.get())
             self.config.set('telegram.send_completed', self.telegram_send_completed_var.get())
+            self.config.set('telegram.send_dropped', self.telegram_send_dropped_var.get())
+            self.config.set('telegram.send_rewatching', self.telegram_send_rewatching_var.get())
             
             self.changes_made = True
             messagebox.showinfo("Success", "Settings saved successfully!")
@@ -390,6 +394,16 @@ class OptionsDialog:
         completed_check = ttk.Checkbutton(filter_frame, text="Only completed anime",
                                         variable=self.telegram_send_completed_var)
         completed_check.pack(anchor=tk.W)
+        
+        self.telegram_send_dropped_var = tk.BooleanVar()
+        dropped_check = ttk.Checkbutton(filter_frame, text="Dropped anime",
+                                       variable=self.telegram_send_dropped_var)
+        dropped_check.pack(anchor=tk.W)
+        
+        self.telegram_send_rewatching_var = tk.BooleanVar()
+        rewatching_check = ttk.Checkbutton(filter_frame, text="Started rewatching anime",
+                                          variable=self.telegram_send_rewatching_var)
+        rewatching_check.pack(anchor=tk.W)
         
         # Info label
         info_label = ttk.Label(telegram_frame, 

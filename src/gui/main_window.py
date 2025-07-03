@@ -696,7 +696,8 @@ class MainWindow:
                                     
                                     # Send completion notification
                                     score = anime_entry.get('score', 0)
-                                    self.telegram_notifier.send_completion_update(anime_name, score, username, is_rewatch, rewatch_count, anime_url)
+                                    comment = anime_entry.get('text', '') or anime_entry.get('text_html', '')
+                                    self.telegram_notifier.send_completion_update(anime_name, score, username, is_rewatch, rewatch_count, anime_url, comment)
                                 else:
                                     # Send progress notification
                                     total_episodes = anime_data.get('episodes', 0)
@@ -1225,8 +1226,10 @@ class MainWindow:
                         anime_url = self.selected_anime['anime'].get('url', '')
                         
                         if status in ['dropped', 'rewatching']:
+                            # Get comment from the selected anime
+                            comment = self.selected_anime.get('text', '') or self.selected_anime.get('text_html', '')
                             self.telegram_notifier.send_status_change_update(
-                                anime_name, old_status_display, status, score, username, anime_url
+                                anime_name, old_status_display, status, score, username, anime_url, comment
                             )
                         elif status == 'completed':
                             # Check if this is completing from rewatching

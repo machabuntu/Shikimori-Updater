@@ -50,7 +50,7 @@ class TelegramNotifier:
         
         self._send_message_async(message)
     
-    def send_completion_update(self, anime_name: str, score: int, username: str, is_rewatch: bool = False, rewatch_count: int = 0, anime_url: str = ''):
+    def send_completion_update(self, anime_name: str, score: int, username: str, is_rewatch: bool = False, rewatch_count: int = 0, anime_url: str = '', comment: str = ''):
         """Send completion update for completed anime"""
         if not self.is_enabled():
             return
@@ -86,20 +86,26 @@ class TelegramNotifier:
             if score > 0:
                 message += f"\n⭐ <b>Score:</b> {score}/10"
         
+        # Add comment if exists
+        if comment:
+            message += f"\n💭 <b>Comment:</b> {comment}"
+        
         self._send_message_async(message)
     
-    def send_status_change_update(self, anime_name: str, old_status: str, new_status: str, score: int, username: str, anime_url: str = ''):
+    def send_status_change_update(self, anime_name: str, old_status: str, new_status: str, score: int, username: str, anime_url: str = '', comment: str = ''):
         """Send status change update for manually changed anime status"""
         if not self.is_enabled():
             return
         
-        # Only send for Dropped and Rewatching status changes
-        if new_status not in ['dropped', 'rewatching']:
-            return
-        
-        # Check if any notifications are enabled
-        if not (self.config.get('telegram.send_progress', False) or 
-                self.config.get('telegram.send_completed', False)):
+        # Check specific status change settings
+        if new_status == 'dropped':
+            if not self.config.get('telegram.send_dropped', False):
+                return
+        elif new_status == 'rewatching':
+            if not self.config.get('telegram.send_rewatching', False):
+                return
+        else:
+            # For other status changes, don't send notifications
             return
         
         # Format anime name as hyperlink if URL is available
@@ -125,6 +131,37 @@ class TelegramNotifier:
         
         if score > 0:
             message += f"\n⭐ <b>Score:</b> {score}/10"
+        
+        # Add comment if exists
+        if comment:
+            message += f"\n💭 <b>Comment:</b> {comment}"
+        
+        self._send_message_async(message)
+    
+    def send_comment_update(self, anime_name: str, comment: str, username: str, anime_url: str = ''):
+        """Send notification when a comment is added to anime"""
+        if not self.is_enabled():
+            return
+        
+        # For now, always send comment notifications if telegram is enabled
+        # Future: could add a specific setting for comment notifications
+        
+        # Format anime name as hyperlink if URL is available
+        if anime_url:
+            # Ensure URL is absolute
+            if anime_url.startswith('/'):
+                full_url = f"https://shikimori.one{anime_url}"
+            else:
+                full_url = anime_url
+            anime_display = f"<a href='{full_url}'>{anime_name}</a>"
+        else:
+            anime_display = anime_name
+        
+        # Multi-line formatted message
+        message = f"💭 <b>Comment Added</b>\n"
+        message += f"👤 <b>User:</b> {username}\n"
+        message += f"🎬 <b>Anime:</b> {anime_display}\n"
+        message += f"💬 <b>Comment:</b> {comment}"
         
         self._send_message_async(message)
     
