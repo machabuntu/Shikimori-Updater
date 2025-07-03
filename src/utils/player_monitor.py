@@ -116,7 +116,12 @@ class PlayerMonitor:
                 old_player = self.active_players[pid]
                 # Check if the file path has changed
                 if (current_player.file_path != old_player.file_path and 
-                    current_player.file_path is not None):
+                    current_player.file_path is not None and 
+                    old_player.file_path is not None):
+                    # Add debug logging
+                    print(f"File change detected for PID {pid}:")
+                    print(f"  Old: {old_player.file_path}")
+                    print(f"  New: {current_player.file_path}")
                     # File changed - handle old file as closed and new file as opened
                     self._handle_file_change(old_player, current_player)
         
@@ -189,18 +194,28 @@ class PlayerMonitor:
         if not window_title:
             return None
         
-        # PotPlayer window title formats:
-        # "filename.ext - PotPlayer"
-        # "[position/duration] filename.ext - PotPlayer"
-        # "/path/to/file/filename.ext - PotPlayer"
+        # Support multiple players:
+        # PotPlayer: "filename.ext - PotPlayer", "[position/duration] filename.ext - PotPlayer"
+        # VLC: "filename.ext - VLC media player"
+        # MPC-HC: "filename.ext - Media Player Classic"
         
-        # Remove PotPlayer suffix (including variants like "PotPlayer Rus")
+        # Remove player suffix (including variants)
         title = window_title
-        if " - PotPlayer" in title:
-            title = title.split(" - PotPlayer")[0]
+        player_suffixes = [
+            " - PotPlayer", " - PotPlayer Rus", " - VLC media player", 
+            " - Media Player Classic", " - MPC-HC", " - mpv"
+        ]
         
-        # Remove time indicators like [00:00/00:00]
-        title = re.sub(r'^\[\d+:\d+/\d+:\d+\]\s*', '', title)
+        for suffix in player_suffixes:
+            if suffix in title:
+                title = title.split(suffix)[0]
+                break
+        
+        # Remove time indicators like [00:00/00:00] or (00:00/00:00)
+        title = re.sub(r'^[\[\(]\d+:\d+[:/]\d+:\d+[\]\)]\s*', '', title)
+        
+        # Remove progress indicators like "50% - "
+        title = re.sub(r'^\d+%\s*-\s*', '', title)
         
         # Check if it's a full path (Windows path with drive letter or UNC path)
         if title and (title.startswith('\\\\') or (len(title) > 2 and title[1] == ':')):
@@ -211,7 +226,10 @@ class PlayerMonitor:
         # If not a full path, use the cleaned title as an identifier
         # This allows us to detect file changes even without full paths
         if title and title.strip():
-            return title.strip()
+            cleaned_title = title.strip()
+            # Remove any remaining time stamps or episode indicators that might change
+            cleaned_title = re.sub(r'\s*-\s*\d+:\d+$', '', cleaned_title)
+            return cleaned_title
         
         return None
     
