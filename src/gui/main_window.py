@@ -671,8 +671,13 @@ class MainWindow:
                         total_episodes = anime_data.get('episodes', 0)
                         
                         # Determine new status
+                        current_status = anime_entry.get('status', '')
                         new_status = None
-                        if total_episodes > 0 and target_episode >= total_episodes:
+                        
+                        # Check if anime is in Plan to Watch and should be moved to Watching
+                        if current_status == 'planned' and target_episode > 0:
+                            new_status = 'watching'
+                        elif total_episodes > 0 and target_episode >= total_episodes:
                             # Check if anime is scored
                             current_score = anime_entry.get('score', 0)
                             if current_score > 0:
@@ -687,6 +692,8 @@ class MainWindow:
                             message = f"Updated {anime_name} to episode {target_episode}"
                             if new_status == 'completed':
                                 message += " (Completed)"
+                            elif current_status == 'planned' and new_status == 'watching':
+                                message += " (Moved to Watching)"
                             
                             self.root.after(0, lambda: self._set_status(message))
                             # Mark this episode as updated
@@ -973,15 +980,18 @@ class MainWindow:
                 rate_id = anime_entry['id']
                 anime_name = anime_entry['anime'].get('name', 'Unknown')
                 
-                # Check if should auto-complete
+                # Check if should auto-complete or change status
                 total_episodes = anime_entry['anime'].get('episodes', 0)
                 current_score = anime_entry.get('score', 0)
                 current_status = anime_entry.get('status', '')
                 new_status = None
                 rewatches_increment = 0
                 
+                # Check if anime is in Plan to Watch and should be moved to Watching
+                if current_status == 'planned' and episodes > 0:
+                    new_status = 'watching'
                 # Special logic for Rewatching status
-                if current_status == 'rewatching' and total_episodes > 0 and episodes >= total_episodes:
+                elif current_status == 'rewatching' and total_episodes > 0 and episodes >= total_episodes:
                     # Auto-complete from Rewatching and increment rewatches
                     new_status = 'completed'
                     rewatches_increment = 1
@@ -1001,6 +1011,8 @@ class MainWindow:
                     message = f"Updated {anime_name} to episode {episodes}"
                     if new_status == 'completed':
                         message += " (Completed)"
+                    elif current_status == 'planned' and new_status == 'watching':
+                        message += " (Moved to Watching)"
                     
                     self.root.after(0, lambda: self._set_status(message))
                     
