@@ -571,7 +571,10 @@ class MainWindow:
         self.cache_manager.save_anime_list(user_id, self.anime_list_data)
         
         # Clear episode tracking since anime progress might have changed
-        self.updated_anime_episodes.clear()
+        if hasattr(self, 'updated_anime_episodes'):
+            self.updated_anime_episodes.clear()
+        else:
+            self.updated_anime_episodes = set()
         
         # Update UI on main thread
         self.root.after(0, lambda: self.anime_list_frame.update_list(self.anime_list_data))
@@ -612,7 +615,10 @@ class MainWindow:
             self.player_monitor.start_monitoring()
             self.monitoring_active = True
             # Clear episode tracking when starting monitoring
-            self.updated_anime_episodes.clear()
+            if hasattr(self, 'updated_anime_episodes'):
+                self.updated_anime_episodes.clear()
+            else:
+                self.updated_anime_episodes = set()
         
         # Update window title with new monitoring status
         self._update_window_title()
@@ -653,10 +659,12 @@ class MainWindow:
                     episode_key = f"{anime_id}_{target_episode}"
                     
                     # Allow update if episode is next (+1) or if current episode but not yet updated
-                    already_updated = hasattr(self, 'updated_anime_episodes') and episode_key in self.updated_anime_episodes
+                    # Defensive check - ensure updated_anime_episodes exists
+                    if not hasattr(self, 'updated_anime_episodes'):
+                        self.updated_anime_episodes = set()
+                    already_updated = episode_key in self.updated_anime_episodes
                     
-                    if (target_episode == current_episodes + 1 or 
-                        (target_episode == current_episodes and not already_updated)):
+                    if (target_episode == current_episodes + 1):
                         # Update progress
                         rate_id = anime_entry['id']
                         anime_data = anime_entry['anime']

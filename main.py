@@ -16,22 +16,45 @@ def setup_path():
         # Running as PyInstaller executable
         application_path = sys._MEIPASS
         src_path = os.path.join(application_path, 'src')
+        # Also add the main application path
+        if application_path not in sys.path:
+            sys.path.insert(0, application_path)
     else:
         # Running as script
-        application_path = os.path.dirname(__file__)
+        application_path = os.path.dirname(os.path.abspath(__file__))
         src_path = os.path.join(application_path, 'src')
+        # Add both the main directory and src directory
+        if application_path not in sys.path:
+            sys.path.insert(0, application_path)
     
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
+    
+    # Debug path information (for development only)
+    # Uncomment for debugging path issues:
+    # print(f"Application path: {application_path}")
+    # print(f"Source path: {src_path}")
+    # print(f"Frozen: {getattr(sys, 'frozen', False)}")
 
 setup_path()
 
 # Initialize logging first
-from utils.logger import get_logger
-logger = get_logger('main')
+try:
+    from utils.logger import get_logger
+    logger = get_logger('main')
+except ImportError as e:
+    print(f"Failed to import logger: {e}")
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger('main')
 
-from gui.main_window import MainWindow
-from core.config import Config
+try:
+    from gui.main_window import MainWindow
+    from core.config import Config
+except ImportError as e:
+    logger.error(f"Failed to import main modules: {e}")
+    messagebox.showerror("Import Error", f"Failed to import required modules: {e}\n\nPlease check the installation.")
+    sys.exit(1)
 
 def main():
     """Main application entry point"""
