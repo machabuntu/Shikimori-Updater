@@ -431,24 +431,33 @@ class MainWindow:
         """Handle authentication"""
         if self.config.is_authenticated:
             # Already authenticated, offer to logout
+            self.logger.info("User requested logout (already authenticated)")
             if messagebox.askyesno("Logout", "Do you want to logout from Shikimori?"):
                 self._logout()
         else:
             # Show authentication dialog
+            self.logger.info("User requested authentication")
             auth_dialog = SimpleAuthDialog(self.root, self.config, self.shikimori)
             self.root.wait_window(auth_dialog.dialog)
             
             if self.config.is_authenticated:
+                self.logger.info("Authentication successful, loading user data")
                 self._load_user_data()
+            else:
+                self.logger.info("Authentication cancelled or failed")
     
     def _logout(self):
         """Logout from Shikimori"""
+        username = self.current_user.get('nickname', 'Unknown') if self.current_user else 'Unknown'
+        self.logger.info(f"Logging out user: {username}")
+        
         self.config.set('shikimori.access_token', None)
         self.config.set('shikimori.refresh_token', None)
         self.config.set('shikimori.user_id', None)
         
         # Stop periodic updater
         self.anime_matcher.stop_periodic_updater()
+        self.logger.info("Stopped periodic anime status updater")
         
         self.current_user = None
         self.anime_list_data.clear()
@@ -456,29 +465,43 @@ class MainWindow:
         self._update_auth_ui()
         self.anime_list_frame.clear_list()
         self._set_status("Logged out")
+        self.logger.info("Logout completed successfully")
     
     def _load_user_data(self):
         """Load user data from Shikimori"""
+        self.logger.info("Starting user data loading process")
+        
         def load_data():
             try:
                 self._set_status("Loading user data...")
                 
                 # Get current user
+                self.logger.info("Fetching current user information from Shikimori")
                 self.current_user = self.shikimori.get_current_user()
                 if not self.current_user:
+                    self.logger.error("Failed to get user information from Shikimori API")
                     messagebox.showerror("Error", "Failed to get user information")
                     return
+                
+                username = self.current_user.get('nickname', 'Unknown')
+                user_id = self.current_user.get('id', 'Unknown')
+                self.logger.info(f"Successfully loaded user: {username} (ID: {user_id})")
                 
                 # Update UI on main thread
                 self.root.after(0, self._update_auth_ui)
                 
                 # Load anime list
+                self.logger.info("Loading anime list data")
                 self._refresh_list_data()
                 
                 # Load manga list
+                self.logger.info("Loading manga list data")
                 self._refresh_manga_list_data()
                 
+                self.logger.info("User data loading completed successfully")
+                
             except Exception as e:
+                self.logger.error(f"Error loading user data: {str(e)}", exc_info=True)
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load user data: {str(e)}"))
                 self.root.after(0, lambda: self._set_status("Error loading data"))
         
@@ -487,13 +510,18 @@ class MainWindow:
     def _refresh_list(self, force_refresh: bool = False):
         """Refresh anime list from Shikimori"""
         if not self.config.is_authenticated:
+            self.logger.warning("Attempted to refresh anime list without authentication")
             messagebox.showwarning("Warning", "Please login to Shikimori first")
             return
+        
+        refresh_type = "forced" if force_refresh else "normal"
+        self.logger.info(f"Starting anime list refresh ({refresh_type})")
         
         def refresh_data():
             try:
                 self._refresh_list_data(force_refresh=force_refresh)
             except Exception as e:
+                self.logger.error(f"Failed to refresh anime list: {str(e)}", exc_info=True)
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to refresh list: {str(e)}"))
                 self.root.after(0, lambda: self._set_status("Error refreshing list"))
         
@@ -615,14 +643,18 @@ class MainWindow:
     def _toggle_monitoring(self):
         """Toggle player monitoring"""
         if not self.config.is_authenticated:
+            self.logger.warning("Attempted to toggle monitoring without authentication")
             messagebox.showwarning("Warning", "Please login to Shikimori first")
             return
         
         if self.monitoring_active:
+            self.logger.info("Stopping player monitoring")
             self.player_monitor.stop_monitoring()
             self.monitoring_active = False
             self.current_anime_var.set("Now Watching: None")  # Clear current episode display
+            self.logger.info("Player monitoring stopped successfully")
         else:
+            self.logger.info("Starting player monitoring")
             self.player_monitor.start_monitoring()
             self.monitoring_active = True
             # Clear episode tracking when starting monitoring
@@ -630,6 +662,7 @@ class MainWindow:
                 self.updated_anime_episodes.clear()
             else:
                 self.updated_anime_episodes = set()
+            self.logger.info("Player monitoring started successfully")
         
         # Update window title with new monitoring status
         self._update_window_title()
@@ -642,16 +675,22 @@ class MainWindow:
     
     def _on_episode_detected(self, episode_info: EpisodeInfo):
         """Handle detected episode"""
+        self.logger.info(f"Episode detected: {episode_info.anime_name} - Episode {episode_info.episode_number}")
+        
         # Check if anime is in user's list
         if self._is_anime_in_list(episode_info.anime_name):
             anime_display = f"Now Watching: {episode_info.anime_name} - Episode {episode_info.episode_number}"
+            self.logger.info(f"Anime found in user's list: {episode_info.anime_name}")
         else:
             anime_display = f"Anime not in list: {episode_info.anime_name} - Episode {episode_info.episode_number}"
+            self.logger.info(f"Anime not found in user's list: {episode_info.anime_name}")
         
         self.root.after(0, lambda: self.current_anime_var.set(anime_display))
     
     def _on_episode_watched(self, episode_info: EpisodeInfo, watch_time: float):
         """Handle watched episode"""
+        self.logger.info(f"Episode watched: {episode_info.anime_name} - Episode {episode_info.episode_number} (Watch time: {watch_time:.1f}s)")
+        
         def process_episode():
             try:
                 # Find matching anime in user's list
@@ -659,6 +698,7 @@ class MainWindow:
                 for anime_list in self.anime_list_data.values():
                     all_anime.extend(anime_list)
                 
+                self.logger.debug(f"Searching for anime match: {episode_info.anime_name}")
                 match_result = self.anime_matcher.find_best_match(
                     episode_info.anime_name, all_anime, episode_info.episode_number)
                 
@@ -666,13 +706,17 @@ class MainWindow:
                     anime_entry, similarity = match_result
                     anime_data = anime_entry['anime']
                     anime_name = anime_data.get('name', episode_info.anime_name)
+                    anime_id = anime_entry['id']
+                    
+                    self.logger.info(f"Anime match found: {anime_name} (ID: {anime_id}, Similarity: {similarity:.2f})")
                     
                     # Check if episode number is +1 from current progress
                     current_episodes = anime_entry.get('episodes', 0)
                     target_episode = episode_info.episode_number
                     
+                    self.logger.info(f"Episode progress check: Current={current_episodes}, Target={target_episode}")
+                    
                     # Check if this episode has already been updated for this anime
-                    anime_id = anime_entry['id']
                     episode_key = f"{anime_id}_{target_episode}"
                     
                     # Allow update if episode is next (+1) or if current episode but not yet updated
@@ -680,6 +724,9 @@ class MainWindow:
                     if not hasattr(self, 'updated_anime_episodes'):
                         self.updated_anime_episodes = set()
                     already_updated = episode_key in self.updated_anime_episodes
+                    
+                    if already_updated:
+                        self.logger.info(f"Episode {target_episode} already updated for {anime_name}, skipping")
                     
                     if (target_episode == current_episodes + 1):
                         # Update progress
@@ -691,16 +738,24 @@ class MainWindow:
                         current_status = anime_entry.get('status', '')
                         new_status = None
                         
+                        self.logger.info(f"Status determination: Current status={current_status}, Total episodes={total_episodes}")
+                        
                         # Check if anime is in Plan to Watch and should be moved to Watching
                         if current_status == 'planned' and target_episode > 0:
                             new_status = 'watching'
+                            self.logger.info(f"Status change: {current_status} -> {new_status} (started watching)")
                         elif total_episodes > 0 and target_episode >= total_episodes:
                             # Check if anime is scored
                             current_score = anime_entry.get('score', 0)
                             if current_score > 0:
                                 new_status = 'completed'
+                                self.logger.info(f"Status change: {current_status} -> {new_status} (completed, has score)")
+                            else:
+                                self.logger.info(f"Anime finished but no score set, keeping status as {current_status}")
                         
                         # Update on Shikimori
+                        self.logger.info(f"Updating Shikimori: {anime_name} -> Episode {target_episode}" + 
+                                       (f", Status: {new_status}" if new_status else ""))
                         success = self.shikimori.update_anime_progress(
                             rate_id, target_episode, status=new_status)
                         
@@ -712,6 +767,7 @@ class MainWindow:
                             elif current_status == 'planned' and new_status == 'watching':
                                 message += " (Moved to Watching)"
                             
+                            self.logger.info(f"Shikimori update successful: {message}")
                             self.root.after(0, lambda: self._set_status(message))
                             # Mark this episode as updated
                             self.updated_anime_episodes.add(episode_key)
@@ -725,6 +781,7 @@ class MainWindow:
                             # Update cache with the modified data
                             if self.current_user:
                                 self.cache_manager.save_anime_list(self.current_user['id'], self.anime_list_data)
+                                self.logger.debug("Anime list cache updated after scrobbling")
                             
                             # Send Telegram notification for scrobbling update
                             if self.current_user:
@@ -741,6 +798,8 @@ class MainWindow:
                                         # Get current rewatch count (this would be updated by the API call)
                                         rewatch_count = anime_entry.get('rewatches', 0) + 1
                                     
+                                    self.logger.info(f"Sending completion Telegram notification for {anime_name}" + 
+                                                   (f" (rewatch #{rewatch_count})" if is_rewatch else ""))
                                     
                                     # Send completion notification
                                     score = anime_entry.get('score', 0)
@@ -749,21 +808,27 @@ class MainWindow:
                                 else:
                                     # Send progress notification
                                     total_episodes = anime_data.get('episodes', 0)
+                                    self.logger.info(f"Sending progress Telegram notification for {anime_name} episode {target_episode}")
                                     self.telegram_notifier.send_progress_update(anime_name, target_episode, total_episodes, username, anime_url)
                             
                             self.root.after(0, lambda: self._update_single_anime(anime_entry))
                         else:
-                            self.root.after(0, lambda: self._set_status(
-                                f"Failed to update {episode_info.anime_name}"))
+                            error_msg = f"Failed to update {episode_info.anime_name}"
+                            self.logger.error(f"Shikimori update failed: {error_msg}")
+                            self.root.after(0, lambda: self._set_status(error_msg))
                     else:
-                        self.root.after(0, lambda: self._set_status(
-                            f"Episode {target_episode} is not next for {episode_info.anime_name} (current: {current_episodes})"))
+                        warn_msg = f"Episode {target_episode} is not next for {episode_info.anime_name} (current: {current_episodes})"
+                        self.logger.warning(f"Episode validation failed: {warn_msg}")
+                        self.root.after(0, lambda: self._set_status(warn_msg))
                 else:
-                    self.root.after(0, lambda: self._set_status(
-                        f"No match found for {episode_info.anime_name}"))
+                    warn_msg = f"No match found for {episode_info.anime_name}"
+                    self.logger.warning(f"Anime matching failed: {warn_msg}")
+                    self.root.after(0, lambda: self._set_status(warn_msg))
                     
             except Exception as e:
-                self.root.after(0, lambda: self._set_status(f"Error processing episode: {str(e)}"))
+                error_msg = f"Error processing episode: {str(e)}"
+                self.logger.error(f"Episode processing error: {error_msg}", exc_info=True)
+                self.root.after(0, lambda: self._set_status(error_msg))
         
         threading.Thread(target=process_episode, daemon=True).start()
     

@@ -41,6 +41,10 @@ class ShikimoriClient:
             'User-Agent': 'ShikimoriUpdater/1.0'
         })
         
+        # Setup logging
+        from utils.logger import get_logger
+        self.logger = get_logger('shikimori_api')
+        
         # Rate limiting for API requests
         self.api_request_delay = 0.5  # 500ms delay between requests to respect API limits
         self.last_api_request = 0
@@ -162,55 +166,70 @@ class ShikimoriClient:
     def get_current_user(self) -> Optional[Dict[str, Any]]:
         """Get current authenticated user info"""
         try:
+            self.logger.debug("Fetching current user info")
             response = self._make_request('GET', '/users/whoami')
             if response.status_code == 200:
                 user_data = response.json()
+                username = user_data.get('nickname', 'Unknown')
+                user_id = user_data.get('id', 'Unknown')
+                self.logger.info(f"Successfully fetched user info: {username} (ID: {user_id})")
                 self.config.set('shikimori.user_id', user_data['id'])
                 return user_data
+            else:
+                self.logger.error(f"Failed to get user info: HTTP {response.status_code}")
             return None
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"Error getting current user: {e}")
             return None
     
     def get_user_anime_list(self, user_id: int, status: str = None) -> List[Dict[str, Any]]:
-            """Get user's anime list with pagination support"""
-            all_anime = []
-            page = 1
-            limit = 100  # Maximum items per page
-            
-            try:
-                while True:
-                    # Rate limiting - wait before making request
-                    self._wait_for_api_rate_limit()
-                    
-                    params = {
-                        'page': page,
-                        'limit': limit
-                    }
-                    if status:
-                        params['status'] = status
+        """Get user's anime list with pagination support"""
+        status_filter = f" with status '{status}'" if status else ""
+        self.logger.info(f"Fetching anime list for user {user_id}{status_filter}")
+        
+        all_anime = []
+        page = 1
+        limit = 100  # Maximum items per page
+        
+        try:
+            while True:
+                # Rate limiting - wait before making request
+                self._wait_for_api_rate_limit()
+                
+                params = {
+                    'page': page,
+                    'limit': limit
+                }
+                if status:
+                    params['status'] = status
 
-                    response = self._make_request('GET', f'/users/{user_id}/anime_rates', params=params)
+                self.logger.debug(f"Fetching page {page} of anime list")
+                response = self._make_request('GET', f'/users/{user_id}/anime_rates', params=params)
 
-                    if response.status_code == 200:
-                        page_data = response.json()
+                if response.status_code == 200:
+                    page_data = response.json()
 
-                        # If no data returned, we've reached the end
-                        if not page_data:
-                            break
-
-                        all_anime.extend(page_data)
-
-                        # If we got less than the limit, this was the last page
-                        if len(page_data) < limit:
-                            break
-
-                        page += 1
-                    else:
+                    # If no data returned, we've reached the end
+                    if not page_data:
                         break
 
-                return all_anime
-            except Exception as e:
-                return []
+                    all_anime.extend(page_data)
+                    self.logger.debug(f"Fetched {len(page_data)} anime from page {page}, total: {len(all_anime)}")
+
+                    # If we got less than the limit, this was the last page
+                    if len(page_data) < limit:
+                        break
+
+                    page += 1
+                else:
+                    self.logger.error(f"Failed to fetch anime list page {page}: HTTP {response.status_code}")
+                    break
+
+            self.logger.info(f"Successfully fetched {len(all_anime)} anime{status_filter}")
+            return all_anime
+        except Exception as e:
+            self.logger.error(f"Error fetching anime list: {e}")
+            return []
     
     def get_anime_details(self, anime_id: int) -> Optional[Dict[str, Any]]:
         """Get detailed anime information"""
@@ -256,11 +275,21 @@ class ShikimoriClient:
             # Add any additional fields from kwargs
             data.update(kwargs)
             
+            update_info = ', '.join([f"{k}={v}" for k, v in data.items()])
+            self.logger.info(f"Updating anime progress (rate_id: {rate_id}): {update_info}")
+            
             response = self._make_request('PATCH', f'/user_rates/{rate_id}', 
                                         json={'user_rate': data})
             
-            return response.status_code == 200
-        except Exception:
+            success = response.status_code == 200
+            if success:
+                self.logger.info(f"Successfully updated anime progress for rate_id {rate_id}")
+            else:
+                self.logger.error(f"Failed to update anime progress for rate_id {rate_id}: HTTP {response.status_code}")
+            
+            return success
+        except Exception as e:
+            self.logger.error(f"Error updating anime progress for rate_id {rate_id}: {e}")
             return False
     
     def add_anime_to_list(self, anime_id: int, status: str = 'planned') -> Optional[Dict[str, Any]]:

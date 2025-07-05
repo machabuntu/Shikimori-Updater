@@ -37,6 +37,10 @@ class PlayerMonitor:
         self.check_interval = config.get('monitoring.check_interval', 5)
         self.min_watch_time = config.get('monitoring.min_watch_time', 60)
         
+        # Setup logging
+        from utils.logger import get_logger
+        self.logger = get_logger('player_monitor')
+        
         self.running = False
         self.monitor_thread = None
         self.active_players: Dict[int, PlayerInfo] = {}
@@ -47,29 +51,40 @@ class PlayerMonitor:
         self.on_episode_detected: Optional[Callable[[EpisodeInfo], None]] = None
         self.on_episode_watched: Optional[Callable[[EpisodeInfo, float], None]] = None
         self.on_player_closed: Optional[Callable[[], None]] = None
+        
+        self.logger.info(f"Player monitor initialized with supported players: {self.supported_players}")
     
     def start_monitoring(self):
         """Start monitoring media players"""
         if not self.running:
+            self.logger.info("Starting player monitoring")
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
+        else:
+            self.logger.debug("Player monitoring already running")
     
     def stop_monitoring(self):
         """Stop monitoring media players"""
-        self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=1)
+        if self.running:
+            self.logger.info("Stopping player monitoring")
+            self.running = False
+            if self.monitor_thread:
+                self.monitor_thread.join(timeout=1)
+        else:
+            self.logger.debug("Player monitoring not running")
     
     def _monitor_loop(self):
         """Main monitoring loop"""
+        self.logger.info("Player monitoring loop started")
         while self.running:
             try:
                 self._check_players()
                 time.sleep(self.check_interval)
             except Exception as e:
-                print(f"Error in monitor loop: {e}")
+                self.logger.error(f"Error in monitor loop: {e}", exc_info=True)
                 time.sleep(self.check_interval)
+        self.logger.info("Player monitoring loop ended")
     
     def _check_players(self):
         """Check for running media players"""
@@ -235,13 +250,21 @@ class PlayerMonitor:
     
     def _handle_new_player(self, player_info: PlayerInfo):
         """Handle newly detected player"""
+        self.logger.info(f"New player detected: {player_info.name} (PID: {player_info.pid})")
+        self.logger.info(f"Playing file: {player_info.file_path}")
+        
         episode_info = self._parse_episode_info(player_info)
-        if episode_info and self.on_episode_detected:
-            self.on_episode_detected(episode_info)
+        if episode_info:
+            self.logger.info(f"Episode detected: {episode_info.anime_name} - Episode {episode_info.episode_number}")
+            if self.on_episode_detected:
+                self.on_episode_detected(episode_info)
+        else:
+            self.logger.warning(f"Could not parse episode info from: {player_info.file_path}")
         
         # Start tracking watch time
         if player_info.file_path:
             self.watched_episodes[player_info.file_path] = time.time()
+            self.logger.debug(f"Started tracking watch time for: {player_info.file_path}")
     
     def _handle_closed_player(self, player_info: PlayerInfo):
         """Handle closed player"""

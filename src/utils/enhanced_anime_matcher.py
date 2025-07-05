@@ -22,6 +22,10 @@ class EnhancedAnimeMatcher(AnimeMatcher):
         self.api_request_delay = 1.0  # 1000ms delay between API requests (1 request per second to avoid limits)
         self.last_api_request = 0
         
+        # Setup logging
+        from utils.logger import get_logger
+        self.logger = get_logger('enhanced_matcher')
+        
         # Periodic updater for non-released anime
         self.periodic_updater_running = False
         self.periodic_updater_thread = None
@@ -33,14 +37,14 @@ class EnhancedAnimeMatcher(AnimeMatcher):
         
     def initialize_detailed_cache(self, user_id: int, anime_list_data: Dict[str, List[Dict[str, Any]]]):
         """Initialize detailed anime cache with synonyms for user's anime list"""
-        print("Initializing enhanced anime matching with synonyms...")
+        self.logger.info("Initializing enhanced anime matching with synonyms...")
         
         # Try to load from disk cache first
         cached_details = self.cache_manager.load_detailed_anime_info(user_id)
         if cached_details:
             self.detailed_anime_cache = cached_details
             self.cache_loaded = True
-            print(f"Loaded detailed anime info from cache: {len(cached_details)} entries")
+            self.logger.info(f"Loaded detailed anime info from cache: {len(cached_details)} entries")
         
         # Always check if we need to update cache (missing anime or old cache)
         anime_ids = self._get_all_anime_ids_from_list(anime_list_data)
@@ -49,15 +53,15 @@ class EnhancedAnimeMatcher(AnimeMatcher):
             missing_ids = anime_ids - set(cached_details.keys())
             
             if missing_ids:
-                print(f"Found {len(missing_ids)} anime missing detailed info, updating...")
+                self.logger.info(f"Found {len(missing_ids)} anime missing detailed info, fetching in background...")
                 threading.Thread(target=self._fetch_missing_details, 
                                args=(user_id, missing_ids), daemon=True).start()
             else:
-                print("All anime details already cached!")
+                self.logger.info("All anime details already cached!")
             return
         
         # No cache found, need to fetch all details
-        print(f"No detailed cache found, fetching info for {len(anime_ids)} anime...")
+        self.logger.info(f"No detailed cache found, fetching info for {len(anime_ids)} anime in background...")
         
         # Fetch in background to avoid blocking startup
         threading.Thread(target=self._fetch_all_details, 
@@ -260,6 +264,7 @@ class EnhancedAnimeMatcher(AnimeMatcher):
     def start_periodic_updater(self, user_id: int):
         """Start periodic updating of non-released anime details"""
         if self.periodic_updater_running:
+            self.logger.debug("Periodic updater already running, skipping start")
             return
             
         self.periodic_updater_running = True
@@ -269,20 +274,28 @@ class EnhancedAnimeMatcher(AnimeMatcher):
             daemon=True
         )
         self.periodic_updater_thread.start()
-        print("Started periodic updater for non-released anime details")
+        self.logger.info(f"Started periodic updater for non-released anime details (interval: {self.update_interval//3600}h)")
     
     def stop_periodic_updater(self):
         """Stop periodic updating"""
+        if not self.periodic_updater_running:
+            self.logger.debug("Periodic updater not running, skipping stop")
+            return
+            
+        self.logger.info("Stopping periodic updater for anime details")
         self.periodic_updater_running = False
         if self.periodic_updater_thread:
             self.periodic_updater_thread.join(timeout=2)
-        print("Stopped periodic updater for anime details")
+        self.logger.info("Periodic updater stopped successfully")
     
     def _periodic_update_loop(self, user_id: int):
         """Main loop for periodic updates"""
+        self.logger.info("Periodic update loop started")
+        
         while self.periodic_updater_running:
             try:
                 # Wait for the update interval
+                self.logger.debug(f"Waiting {self.update_interval//3600}h for next periodic update")
                 for _ in range(self.update_interval):
                     if not self.periodic_updater_running:
                         break
@@ -292,45 +305,63 @@ class EnhancedAnimeMatcher(AnimeMatcher):
                     break
                     
                 # Update non-released anime
+                self.logger.info("Starting periodic update of non-released anime")
                 self._update_non_released_anime(user_id)
                 
             except Exception as e:
-                print(f"Error in periodic update loop: {e}")
+                self.logger.error(f"Error in periodic update loop: {e}", exc_info=True)
                 # Wait a bit before retrying
                 time.sleep(60)
+        
+        self.logger.info("Periodic update loop ended")
     
     def _update_non_released_anime(self, user_id: int):
         """Update detailed info for anime that are not released"""
         if not self.detailed_anime_cache:
-            print("No detailed cache available for periodic update")
+            self.logger.warning("No detailed cache available for periodic update")
             return
             
         # Find anime that are not released
         non_released_ids = []
+        status_counts = {}
+        
         for anime_id, details in self.detailed_anime_cache.items():
             status = details.get('status', '').lower()
-            if status and status != 'released':
-                non_released_ids.append(anime_id)
+            if status:
+                status_counts[status] = status_counts.get(status, 0) + 1
+                if status != 'released':
+                    non_released_ids.append(anime_id)
+        
+        self.logger.info(f"Cache status distribution: {status_counts}")
         
         if not non_released_ids:
-            print("No non-released anime found for periodic update")
+            self.logger.info("No non-released anime found for periodic update")
             return
             
-        print(f"Updating {len(non_released_ids)} non-released anime details...")
+        self.logger.info(f"Updating {len(non_released_ids)} non-released anime details...")
         
         updated_count = 0
+        status_changes = []
+        
         for anime_id in non_released_ids:
             if not self.periodic_updater_running:
+                self.logger.info("Periodic update interrupted, stopping")
                 break
                 
             try:
                 # Rate limiting
                 self._wait_for_api_rate_limit()
                 
+                # Get current status for comparison
+                old_status = self.detailed_anime_cache.get(anime_id, {}).get('status', 'unknown')
+                
                 # Fetch updated details
+                self.logger.debug(f"Fetching updated details for anime {anime_id}")
                 details = self.shikimori_client.get_anime_details(anime_id)
                 
                 if details:
+                    new_status = details.get('status', 'unknown')
+                    
                     # Update cache - ensure we actually update the existing entry
                     if anime_id in self.detailed_anime_cache:
                         self.detailed_anime_cache[anime_id].update(details)
@@ -338,25 +369,40 @@ class EnhancedAnimeMatcher(AnimeMatcher):
                         self.detailed_anime_cache[anime_id] = details
                     updated_count += 1
                     
+                    # Track status changes
+                    if old_status != new_status:
+                        anime_name = details.get('name', f'ID:{anime_id}')
+                        status_changes.append(f"{anime_name}: {old_status} -> {new_status}")
+                        self.logger.info(f"Status change detected: {anime_name} ({anime_id}): {old_status} -> {new_status}")
+                    
                     # Save progress periodically
                     if updated_count % 10 == 0:
                         self.cache_manager.save_detailed_anime_info(user_id, self.detailed_anime_cache)
-                        print(f"Periodic update progress: {updated_count}/{len(non_released_ids)} updated")
+                        self.logger.info(f"Periodic update progress: {updated_count}/{len(non_released_ids)} updated")
+                else:
+                    self.logger.warning(f"Failed to fetch details for anime {anime_id}")
                         
             except Exception as e:
-                print(f"Error updating anime {anime_id} during periodic update: {e}")
+                self.logger.error(f"Error updating anime {anime_id} during periodic update: {e}")
                 continue
         
         # Final save
         if updated_count > 0:
             self.cache_manager.save_detailed_anime_info(user_id, self.detailed_anime_cache)
-            print(f"Periodic update completed: {updated_count}/{len(non_released_ids)} anime updated")
+            
+            if status_changes:
+                self.logger.info(f"Periodic update completed: {updated_count}/{len(non_released_ids)} anime updated, {len(status_changes)} status changes:")
+                for change in status_changes:
+                    self.logger.info(f"  - {change}")
+            else:
+                self.logger.info(f"Periodic update completed: {updated_count}/{len(non_released_ids)} anime updated, no status changes")
             
             # Trigger UI refresh callback if available
             if hasattr(self, 'on_cache_updated_callback') and self.on_cache_updated_callback:
+                self.logger.debug("Triggering UI refresh callback")
                 self.on_cache_updated_callback()
         else:
-            print("Periodic update completed: no anime were updated")
+            self.logger.info("Periodic update completed: no anime were updated")
     
     def set_cache_updated_callback(self, callback):
         """Set callback to be called when cache is updated"""
