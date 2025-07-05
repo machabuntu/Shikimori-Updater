@@ -447,6 +447,9 @@ class MainWindow:
         self.config.set('shikimori.refresh_token', None)
         self.config.set('shikimori.user_id', None)
         
+        # Stop periodic updater
+        self.anime_matcher.stop_periodic_updater()
+        
         self.current_user = None
         self.anime_list_data.clear()
         
@@ -547,6 +550,10 @@ class MainWindow:
                 # Initialize enhanced matching with synonyms
                 if self.current_user:
                     self.anime_matcher.initialize_detailed_cache(self.current_user['id'], self.anime_list_data)
+                    # Set callback for cache updates to refresh UI
+                    self.anime_matcher.set_cache_updated_callback(self._on_detailed_cache_updated)
+                    # Start periodic updater for non-released anime
+                    self.anime_matcher.start_periodic_updater(self.current_user['id'])
                 return
         
         # Load from API if no cache or forced refresh
@@ -583,6 +590,10 @@ class MainWindow:
         # Initialize enhanced matching with synonyms
         if self.current_user:
             self.anime_matcher.initialize_detailed_cache(self.current_user['id'], self.anime_list_data)
+            # Set callback for cache updates to refresh UI
+            self.anime_matcher.set_cache_updated_callback(self._on_detailed_cache_updated)
+            # Start periodic updater for non-released anime
+            self.anime_matcher.start_periodic_updater(self.current_user['id'])
     
     def _update_auth_ui(self):
         """Update authentication UI elements"""
@@ -622,6 +633,12 @@ class MainWindow:
         
         # Update window title with new monitoring status
         self._update_window_title()
+    
+    def _on_detailed_cache_updated(self):
+        """Called when the detailed anime cache is updated by the periodic updater"""
+        # Schedule UI refresh on the main thread
+        self.root.after(0, lambda: self.anime_list_frame.update_list(self.anime_list_data))
+        self.root.after(0, lambda: self._set_status("Anime status highlighting updated"))
     
     def _on_episode_detected(self, episode_info: EpisodeInfo):
         """Handle detected episode"""
@@ -805,6 +822,14 @@ class MainWindow:
         # Stop monitoring
         if self.monitoring_active:
             self.player_monitor.stop_monitoring()
+        
+        # Stop notification monitoring
+        if hasattr(self, 'notification_manager'):
+            self.notification_manager.stop_monitoring()
+        
+        # Stop periodic updater
+        if hasattr(self, 'anime_matcher'):
+            self.anime_matcher.stop_periodic_updater()
         
         # Stop system tray
         if self.tray_icon and hasattr(self.tray_icon, 'stop'):

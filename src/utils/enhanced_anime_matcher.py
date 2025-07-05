@@ -22,6 +22,15 @@ class EnhancedAnimeMatcher(AnimeMatcher):
         self.api_request_delay = 1.0  # 1000ms delay between API requests (1 request per second to avoid limits)
         self.last_api_request = 0
         
+        # Periodic updater for non-released anime
+        self.periodic_updater_running = False
+        self.periodic_updater_thread = None
+        # Get update interval from config (default 1 hour)
+        from core.config import Config
+        config = Config()
+        self.update_interval = config.get('detailed_cache.update_interval_hours', 1) * 3600  # Convert hours to seconds
+        self.on_cache_updated_callback = None  # Callback for when cache is updated
+        
     def initialize_detailed_cache(self, user_id: int, anime_list_data: Dict[str, List[Dict[str, Any]]]):
         """Initialize detailed anime cache with synonyms for user's anime list"""
         print("Initializing enhanced anime matching with synonyms...")
@@ -247,3 +256,108 @@ class EnhancedAnimeMatcher(AnimeMatcher):
         
         # Reinitialize
         self.initialize_detailed_cache(user_id, anime_list_data)
+    
+    def start_periodic_updater(self, user_id: int):
+        """Start periodic updating of non-released anime details"""
+        if self.periodic_updater_running:
+            return
+            
+        self.periodic_updater_running = True
+        self.periodic_updater_thread = threading.Thread(
+            target=self._periodic_update_loop, 
+            args=(user_id,), 
+            daemon=True
+        )
+        self.periodic_updater_thread.start()
+        print("Started periodic updater for non-released anime details")
+    
+    def stop_periodic_updater(self):
+        """Stop periodic updating"""
+        self.periodic_updater_running = False
+        if self.periodic_updater_thread:
+            self.periodic_updater_thread.join(timeout=2)
+        print("Stopped periodic updater for anime details")
+    
+    def _periodic_update_loop(self, user_id: int):
+        """Main loop for periodic updates"""
+        while self.periodic_updater_running:
+            try:
+                # Wait for the update interval
+                for _ in range(self.update_interval):
+                    if not self.periodic_updater_running:
+                        break
+                    time.sleep(1)
+                
+                if not self.periodic_updater_running:
+                    break
+                    
+                # Update non-released anime
+                self._update_non_released_anime(user_id)
+                
+            except Exception as e:
+                print(f"Error in periodic update loop: {e}")
+                # Wait a bit before retrying
+                time.sleep(60)
+    
+    def _update_non_released_anime(self, user_id: int):
+        """Update detailed info for anime that are not released"""
+        if not self.detailed_anime_cache:
+            print("No detailed cache available for periodic update")
+            return
+            
+        # Find anime that are not released
+        non_released_ids = []
+        for anime_id, details in self.detailed_anime_cache.items():
+            status = details.get('status', '').lower()
+            if status and status != 'released':
+                non_released_ids.append(anime_id)
+        
+        if not non_released_ids:
+            print("No non-released anime found for periodic update")
+            return
+            
+        print(f"Updating {len(non_released_ids)} non-released anime details...")
+        
+        updated_count = 0
+        for anime_id in non_released_ids:
+            if not self.periodic_updater_running:
+                break
+                
+            try:
+                # Rate limiting
+                self._wait_for_api_rate_limit()
+                
+                # Fetch updated details
+                details = self.shikimori_client.get_anime_details(anime_id)
+                
+                if details:
+                    # Update cache - ensure we actually update the existing entry
+                    if anime_id in self.detailed_anime_cache:
+                        self.detailed_anime_cache[anime_id].update(details)
+                    else:
+                        self.detailed_anime_cache[anime_id] = details
+                    updated_count += 1
+                    
+                    # Save progress periodically
+                    if updated_count % 10 == 0:
+                        self.cache_manager.save_detailed_anime_info(user_id, self.detailed_anime_cache)
+                        print(f"Periodic update progress: {updated_count}/{len(non_released_ids)} updated")
+                        
+            except Exception as e:
+                print(f"Error updating anime {anime_id} during periodic update: {e}")
+                continue
+        
+        # Final save
+        if updated_count > 0:
+            self.cache_manager.save_detailed_anime_info(user_id, self.detailed_anime_cache)
+            print(f"Periodic update completed: {updated_count}/{len(non_released_ids)} anime updated")
+            
+            # Trigger UI refresh callback if available
+            if hasattr(self, 'on_cache_updated_callback') and self.on_cache_updated_callback:
+                self.on_cache_updated_callback()
+        else:
+            print("Periodic update completed: no anime were updated")
+    
+    def set_cache_updated_callback(self, callback):
+        """Set callback to be called when cache is updated"""
+        self.on_cache_updated_callback = callback
