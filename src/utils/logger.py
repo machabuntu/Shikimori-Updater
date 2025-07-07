@@ -12,7 +12,6 @@ import threading
 
 class DateBasedFileHandler(logging.FileHandler):
     def __init__(self, log_dir, filename_prefix):
-        self._lock = threading.Lock()
         self.log_dir = log_dir
         self.filename_prefix = filename_prefix
         self.current_date = datetime.now().date()
@@ -24,7 +23,7 @@ class DateBasedFileHandler(logging.FileHandler):
 
     def emit(self, record):
         try:
-            self._acquireLock()
+            self.acquire()
             if datetime.now().date() != self.current_date:
                 self.current_date = datetime.now().date()
                 self.baseFilename = self._get_log_filename()
@@ -34,7 +33,7 @@ class DateBasedFileHandler(logging.FileHandler):
                 self.stream = self._open()
             super().emit(record)
         finally:
-            self._releaseLock()
+            self.release()
 
 class Logger:
     """Centralized logging for the application"""
