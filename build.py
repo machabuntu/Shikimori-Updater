@@ -12,17 +12,17 @@ def check_pyinstaller():
     """Check if PyInstaller is installed"""
     try:
         import PyInstaller
-        print("✓ PyInstaller is available")
+        print("[OK] PyInstaller is available")
         return True
     except ImportError:
-        print("✗ PyInstaller not found")
+        print("[ERROR] PyInstaller not found")
         print("Installing PyInstaller...")
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-            print("✓ PyInstaller installed successfully")
+            print("[OK] PyInstaller installed successfully")
             return True
         except subprocess.CalledProcessError:
-            print("✗ Failed to install PyInstaller")
+            print("[ERROR] Failed to install PyInstaller")
             return False
 
 def build_executable():
@@ -59,23 +59,41 @@ def build_executable():
             "main.py"
         ]
         
+        # Add icon files as data if they exist
+        if os.path.exists("icon.png"):
+            cmd.extend(["--add-data", "icon.png;."])
+        if os.path.exists("icon.ico"):
+            cmd.extend(["--add-data", "icon.ico;."])
+        
         # Add icon if it exists
         if os.path.exists("icon.ico"):
             cmd.extend(["--icon", "icon.ico"])
+        elif os.path.exists("icon.png"):
+            # Convert PNG to ICO if needed
+            try:
+                from PIL import Image
+                img = Image.open("icon.png")
+                img.save("icon.ico")
+                cmd.extend(["--icon", "icon.ico"])
+                print("[OK] Converted icon.png to icon.ico")
+            except ImportError:
+                print("! PIL not available for icon conversion, using default icon")
+            except Exception as e:
+                print(f"! Failed to convert icon: {e}")
     
     try:
         subprocess.check_call(cmd)
-        print("✓ Executable built successfully")
+        print("[OK] Executable built successfully")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"✗ Build failed: {e}")
+        print(f"[ERROR] Build failed: {e}")
         return False
 
 def copy_files():
     """Copy additional files to dist folder"""
     dist_dir = "dist"
     if not os.path.exists(dist_dir):
-        print("✗ Dist directory not found")
+        print("[ERROR] Dist directory not found")
         return False
     
     files_to_copy = [
@@ -87,9 +105,9 @@ def copy_files():
         if os.path.exists(file):
             try:
                 shutil.copy2(file, dist_dir)
-                print(f"✓ Copied {file}")
+                print(f"[OK] Copied {file}")
             except Exception as e:
-                print(f"! Could not copy {file}: {e}")
+                print(f"[WARNING] Could not copy {file}: {e}")
     
     return True
 
@@ -113,7 +131,7 @@ def main():
     copy_files()
     
     print("\n" + "=" * 40)
-    print("✓ Build completed successfully!")
+    print("[SUCCESS] Build completed successfully!")
     
     exe_path = os.path.join("dist", "Shikimori Updater.exe")
     if os.path.exists(exe_path):

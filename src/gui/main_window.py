@@ -11,6 +11,7 @@ except ImportError:
 import threading
 import webbrowser
 import os
+import sys
 from typing import Dict, List, Any, Optional
 try:
     import pystray
@@ -90,6 +91,9 @@ class MainWindow:
         """Setup main window properties"""
         self.root.title("Shikimori Updater - Not logged in")
         
+        # Set window icon
+        self._set_window_icon()
+        
         # Set window size and position
         width = self.config.get('window.width', 1000)
         height = self.config.get('window.height', 700)
@@ -125,6 +129,102 @@ class MainWindow:
         # Initialize system tray if available
         if TRAY_AVAILABLE:
             self._setup_system_tray()
+    
+    def _set_window_icon(self):
+        """Set the window icon"""
+        try:
+            # Try to find icon file in different locations
+            icon_paths = [
+                'icon.ico',
+                '../icon.ico',
+                'icon.png',
+                '../icon.png'
+            ]
+            
+            # Check for frozen (PyInstaller) environment
+            if getattr(sys, 'frozen', False):
+                # Running as PyInstaller executable
+                base_path = sys._MEIPASS
+                icon_paths = [
+                    os.path.join(base_path, 'icon.ico'),
+                    os.path.join(base_path, 'icon.png'),
+                    'icon.ico',
+                    'icon.png'
+                ]
+            
+            for icon_path in icon_paths:
+                if os.path.exists(icon_path):
+                    if icon_path.endswith('.ico'):
+                        # Use ICO file directly
+                        self.root.iconbitmap(icon_path)
+                        self.logger.info(f"Window icon set from: {icon_path}")
+                        return
+                    elif icon_path.endswith('.png'):
+                        # Convert PNG to PhotoImage for tkinter
+                        try:
+                            from PIL import Image, ImageTk
+                            img = Image.open(icon_path)
+                            # Resize to standard icon size if needed
+                            img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                            photo = ImageTk.PhotoImage(img)
+                            self.root.iconphoto(True, photo)
+                            # Keep a reference to prevent garbage collection
+                            self.root._icon_photo = photo
+                            self.logger.info(f"Window icon set from: {icon_path}")
+                            return
+                        except ImportError:
+                            self.logger.warning("PIL not available for PNG icon conversion")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to load PNG icon {icon_path}: {e}")
+            
+            self.logger.info("Using default window icon (no custom icon found)")
+            
+        except Exception as e:
+            self.logger.error(f"Error setting window icon: {e}")
+    
+    def _load_tray_icon(self):
+        """Load custom icon for system tray"""
+        try:
+            # Try to find icon file in different locations
+            icon_paths = [
+                'icon.png',
+                '../icon.png',
+                'icon.ico',
+                '../icon.ico'
+            ]
+            
+            # Check for frozen (PyInstaller) environment
+            if getattr(sys, 'frozen', False):
+                # Running as PyInstaller executable
+                base_path = sys._MEIPASS
+                icon_paths = [
+                    os.path.join(base_path, 'icon.png'),
+                    os.path.join(base_path, 'icon.ico'),
+                    'icon.png',
+                    'icon.ico'
+                ]
+            
+            for icon_path in icon_paths:
+                if os.path.exists(icon_path):
+                    try:
+                        img = Image.open(icon_path)
+                        # Resize to tray icon size
+                        img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                        # Convert to RGBA for better compatibility
+                        if img.mode != 'RGBA':
+                            img = img.convert('RGBA')
+                        self.logger.info(f"Tray icon loaded from: {icon_path}")
+                        return img
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load tray icon {icon_path}: {e}")
+                        continue
+            
+            self.logger.info("Using fallback tray icon (no custom icon found)")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error loading tray icon: {e}")
+            return None
     
     def _create_widgets(self):
         """Create main window widgets"""
@@ -1432,28 +1532,32 @@ class MainWindow:
             return
         
         try:
-            # Create a more visible icon with better contrast
-            image = Image.new('RGBA', (32, 32), (0, 0, 0, 0))  # Transparent background
-            draw = ImageDraw.Draw(image)
+            # Try to load custom icon first
+            image = self._load_tray_icon()
             
-            # Draw a blue circle background
-            draw.ellipse([2, 2, 30, 30], fill='#0078D4', outline='#005A9E', width=2)
-            
-            # Draw the letter 'S' in white
-            try:
-                # Try to use a built-in font
-                from PIL import ImageFont
-                font = ImageFont.load_default()
-                # Calculate text position to center it
-                bbox = draw.textbbox((0, 0), 'S', font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                x = (32 - text_width) // 2
-                y = (32 - text_height) // 2 - 2
-                draw.text((x, y), 'S', fill='white', font=font)
-            except:
-                # Fallback to simple text without font
-                draw.text((10, 8), 'S', fill='white')
+            if not image:
+                # Fallback: Create a more visible icon with better contrast
+                image = Image.new('RGBA', (32, 32), (0, 0, 0, 0))  # Transparent background
+                draw = ImageDraw.Draw(image)
+                
+                # Draw a blue circle background
+                draw.ellipse([2, 2, 30, 30], fill='#0078D4', outline='#005A9E', width=2)
+                
+                # Draw the letter 'S' in white
+                try:
+                    # Try to use a built-in font
+                    from PIL import ImageFont
+                    font = ImageFont.load_default()
+                    # Calculate text position to center it
+                    bbox = draw.textbbox((0, 0), 'S', font=font)
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
+                    x = (32 - text_width) // 2
+                    y = (32 - text_height) // 2 - 2
+                    draw.text((x, y), 'S', fill='white', font=font)
+                except:
+                    # Fallback to simple text without font
+                    draw.text((10, 8), 'S', fill='white')
             
             # Create tray menu
             menu = pystray.Menu(
