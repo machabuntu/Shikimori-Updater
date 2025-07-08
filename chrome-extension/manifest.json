@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Anime Scrobbler",
+  "name": "Shikimori Anime Scrobbler",
   "version": "1.0",
   "description": "Scrobble anime names/episodes from streaming websites and update progress in Shikimori Updater.",
   "permissions": [
