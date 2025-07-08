@@ -2,40 +2,10 @@
 
 // Site-specific selectors for popular anime streaming sites
 const SITE_SELECTORS = {
-  // Crunchyroll
-  'crunchyroll.com': {
-    title: '.title',
-    episode: '.episode-title, .episode-number'
-  },
-  // Funimation (now part of Crunchyroll)
-  'funimation.com': {
-    title: '.show-title, .video-title',
-    episode: '.episode-number, .episode-title'
-  },
-  // 9anime
-  '9anime': {
-    title: '.title, .anime-title, .video-title',
-    episode: '.episode, .ep-num, .episode-number'
-  },
-  // Gogoanime
-  'gogoanime': {
-    title: '.anime_video_body_cate .anime-info a, .video-title',
-    episode: '.anime_video_body_cate .anime-info div:contains("Episode")'
-  },
-  // AnimeLab
-  'animelab.com': {
-    title: '.video-player__title, .episode-title',
-    episode: '.episode-number'
-  },
   // qanime.ru
   'qanime.ru': {
     title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
     episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
-  },
-  // Generic fallback selectors
-  'generic': {
-    title: 'h1, .title, .anime-title, .video-title, .show-title, [class*="title"]',
-    episode: '.episode, .ep, .episode-number, .ep-number, [class*="episode"]'
   }
 };
 
