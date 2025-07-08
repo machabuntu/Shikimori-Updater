@@ -16,7 +16,7 @@ class DateBasedFileHandler(logging.FileHandler):
         self.filename_prefix = filename_prefix
         self.current_date = datetime.now().date()
         self.baseFilename = self._get_log_filename()
-        super().__init__(self.baseFilename)
+        super().__init__(self.baseFilename, encoding='utf-8')
 
     def _get_log_filename(self):
         return os.path.join(self.log_dir, f"{self.filename_prefix}_{self.current_date}.log")
@@ -30,6 +30,8 @@ class DateBasedFileHandler(logging.FileHandler):
                 if self.stream:
                     self.stream.close()
                     self.stream = None
+                # Ensure encoding is set when reopening
+                self.encoding = 'utf-8'
                 self.stream = self._open()
             super().emit(record)
         finally:

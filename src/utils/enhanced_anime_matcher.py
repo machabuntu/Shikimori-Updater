@@ -407,3 +407,7 @@ class EnhancedAnimeMatcher(AnimeMatcher):
     def set_cache_updated_callback(self, callback):
         """Set callback to be called when cache is updated"""
         self.on_cache_updated_callback = callback
+    
+    def search_anime(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search for anime by name using Shikimori API"""
+        return self.shikimori_client.search_anime(query, limit)

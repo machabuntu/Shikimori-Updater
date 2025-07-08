@@ -29,6 +29,7 @@ except Exception as e:
     TRAY_AVAILABLE = False
 
 from api.shikimori_client import ShikimoriClient
+from api.api_server import APIServer
 from utils.player_monitor import PlayerMonitor, EpisodeInfo
 from utils.anime_matcher import AnimeMatcher
 from utils.enhanced_anime_matcher import EnhancedAnimeMatcher
@@ -70,12 +71,18 @@ class MainWindow:
         self.tray_icon = None
         self.window_minimized = False
         self.updated_anime_episodes = set()  # Track which anime episodes have been updated
+        self.browser_watched_episodes = {}  # Track browser episodes with start times: {unique_key: start_time}
+        self.browser_pending_timers = {}  # Track pending timer callbacks: {unique_key: timer_id}
         
         # Setup window
         self._setup_window()
         self._create_widgets()
         self._setup_monitoring()
         
+        # Initialize API server
+        self.api_server = APIServer(scrobble_callback=self._handle_scrobble)
+        self.api_server.start()
+
         # Load initial data if authenticated
         if config.is_authenticated:
             self._load_user_data()
@@ -86,6 +93,244 @@ class MainWindow:
         else:
             # Update window title for not logged in state
             self._update_window_title()
+    
+    def _handle_scrobble(self, anime_data):
+        """Handle scrobble data received from API server or extension"""
+        try:
+            # Handle cancel action
+            if anime_data.get('action') == 'cancel':
+                return self._handle_cancel_scrobble(anime_data)
+            
+            title = anime_data['title']
+            episode = anime_data['episode']
+            self.logger.info(f"Scrobbling anime: {title}, Episode: {episode}")
+            
+            # Create unique key for this episode
+            episode_key = f"{title}_{episode}"
+            
+            # Update the "Now Watching" panel immediately
+            # Check if anime is in user's list first
+            if self._is_anime_in_list(title):
+                anime_display = f"Now Watching: {title} - Episode {episode}"
+                self.logger.info(f"Anime found in user's list: {title}")
+            else:
+                anime_display = f"Anime not in list: {title} - Episode {episode}"
+                self.logger.info(f"Anime not found in user's list: {title}")
+            
+            # Update the panel on main thread
+            self.root.after(0, lambda: self.current_anime_var.set(anime_display))
+            
+            # Start tracking watch time for browser episodes
+            import time
+            self.browser_watched_episodes[episode_key] = time.time()
+            
+            def process_episode():
+                try:
+                    # Clean up timer tracking since we're now processing
+                    current_episode_key = f"{title}_{episode}"
+                    if current_episode_key in self.browser_pending_timers:
+                        del self.browser_pending_timers[current_episode_key]
+                    if current_episode_key in self.browser_watched_episodes:
+                        del self.browser_watched_episodes[current_episode_key]
+                    
+                    # Find matching anime in user's list
+                    all_anime = []
+                    for anime_list in self.anime_list_data.values():
+                        all_anime.extend(anime_list)
+                    
+                    self.logger.debug(f"Searching for anime match: {title}")
+                    match_result = self.anime_matcher.find_best_match(title, all_anime, episode)
+                    
+                    if match_result:
+                        anime_entry, similarity = match_result
+                        anime_data = anime_entry['anime']
+                        anime_name = anime_data.get('name', title)
+                        anime_id = anime_entry['id']
+                        
+                        self.logger.info(f"Anime match found: {anime_name} (ID: {anime_id}, Similarity: {similarity:.2f})")
+                        
+                        # Check if episode number is +1 from current progress
+                        current_episodes = anime_entry.get('episodes', 0)
+                        target_episode = episode
+                        
+                        self.logger.info(f"Episode progress check: Current={current_episodes}, Target={target_episode}")
+                        
+                        # Check if this episode has already been updated for this anime
+                        anime_episode_key = f"{anime_id}_{target_episode}"
+                        
+                        # Allow update if episode is next (+1) or if current episode but not yet updated
+                        # Defensive check - ensure updated_anime_episodes exists
+                        if not hasattr(self, 'updated_anime_episodes'):
+                            self.updated_anime_episodes = set()
+                        already_updated = anime_episode_key in self.updated_anime_episodes
+                        
+                        if already_updated:
+                            self.logger.info(f"Episode {target_episode} already updated for {anime_name}, skipping")
+                        
+                        if (target_episode == current_episodes + 1):
+                            # Update progress
+                            rate_id = anime_entry['id']
+                            anime_data = anime_entry['anime']
+                            total_episodes = anime_data.get('episodes', 0)
+                            
+                            # Determine new status
+                            current_status = anime_entry.get('status', '')
+                            new_status = None
+                            
+                            self.logger.info(f"Status determination: Current status={current_status}, Total episodes={total_episodes}")
+                            
+                            # Check if anime is in Plan to Watch and should be moved to Watching
+                            if current_status == 'planned' and target_episode > 0:
+                                new_status = 'watching'
+                                self.logger.info(f"Status change: {current_status} -> {new_status} (started watching)")
+                            elif total_episodes > 0 and target_episode >= total_episodes:
+                                # Check if anime is scored
+                                current_score = anime_entry.get('score', 0)
+                                if current_score > 0:
+                                    new_status = 'completed'
+                                    self.logger.info(f"Status change: {current_status} -> {new_status} (completed, has score)")
+                                else:
+                                    self.logger.info(f"Anime finished but no score set, keeping status as {current_status}")
+                            
+                            # Update on Shikimori
+                            self.logger.info(f"Updating Shikimori: {anime_name} -> Episode {target_episode}" + 
+                                            (f", Status: {new_status}" if new_status else ""))
+                            success = self.shikimori.update_anime_progress(
+                                rate_id, target_episode, status=new_status)
+                            
+                            if success:
+                                anime_name = anime_data.get('name', title)
+                                message = f"Updated {anime_name} to episode {target_episode}"
+                                if new_status == 'completed':
+                                    message += " (Completed)"
+                                elif current_status == 'planned' and new_status == 'watching':
+                                    message += " (Moved to Watching)"
+                                
+                                self.logger.info(f"Shikimori update successful: {message}")
+                                self.root.after(0, lambda: self._set_status(message))
+                                # Mark this episode as updated
+                                self.updated_anime_episodes.add(anime_episode_key)
+                                
+                                # Update only this specific anime in the list instead of full refresh
+                                # Update the local data first
+                                anime_entry['episodes'] = target_episode
+                                if new_status:
+                                    anime_entry['status'] = new_status
+                                
+                                # Update cache with the modified data
+                                if self.current_user:
+                                    self.cache_manager.save_anime_list(self.current_user['id'], self.anime_list_data)
+                                    self.logger.debug("Anime list cache updated after scrobbling")
+                                
+                                # Send Telegram notification for scrobbling update
+                                if self.current_user:
+                                    username = self.current_user.get('nickname', 'Unknown')
+                                    anime_url = anime_data.get('url', '')
+                                    
+                                    if new_status == 'completed':
+                                        # Check if this is a rewatch completion
+                                        old_status = anime_entry.get('status', '')
+                                        is_rewatch = old_status == 'rewatching'
+                                        rewatch_count = 0
+                                        
+                                        if is_rewatch:
+                                            # Get current rewatch count (this would be updated by the API call)
+                                            rewatch_count = anime_entry.get('rewatches', 0) + 1
+                                        
+                                        self.logger.info(f"Sending completion Telegram notification for {anime_name}" + 
+                                                        (f" (rewatch #{rewatch_count})" if is_rewatch else ""))
+                                        
+                                        # Send completion notification
+                                        score = anime_entry.get('score', 0)
+                                        comment = anime_entry.get('text', '') or anime_entry.get('text_html', '')
+                                        self.telegram_notifier.send_completion_update(anime_name, score, username, is_rewatch, rewatch_count, anime_url, comment)
+                                    else:
+                                        # Send progress notification
+                                        total_episodes = anime_data.get('episodes', 0)
+                                        self.logger.info(f"Sending progress Telegram notification for {anime_name} episode {target_episode}")
+                                        self.telegram_notifier.send_progress_update(anime_name, target_episode, total_episodes, username, anime_url)
+                                
+                                self.root.after(0, lambda: self._update_single_anime(anime_entry))
+                            else:
+                                error_msg = f"Failed to update {title}"
+                                self.logger.error(f"Shikimori update failed: {error_msg}")
+                                self.root.after(0, lambda: self._set_status(error_msg))
+                        else:
+                            warn_msg = f"Episode {target_episode} is not next for {title} (current: {current_episodes})"
+                            self.logger.warning(f"Episode validation failed: {warn_msg}")
+                            self.root.after(0, lambda: self._set_status(warn_msg))
+                    else:
+                        warn_msg = f"No match found for {title}"
+                        self.logger.warning(f"Anime matching failed: {warn_msg}")
+                        self.root.after(0, lambda: self._set_status(warn_msg))
+                        
+                except Exception as e:
+                    error_msg = f"Error processing episode: {str(e)}"
+                    self.logger.error(f"Episode processing error: {error_msg}", exc_info=True)
+                    self.root.after(0, lambda: self._set_status(error_msg))
+            
+            # Set a timer for browser scrobbling just like local scrobbling
+            timer_duration = self.config.get('monitoring.min_watch_time', 60)
+            timer_id = self.root.after(timer_duration * 1000, process_episode)
+            self.browser_pending_timers[episode_key] = timer_id
+            
+            self.logger.info(f"Browser scrobble timer set for {timer_duration} seconds: {title} Episode {episode}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to handle scrobble: {e}")
+            # Update status bar with error message
+            self.root.after(0, lambda: self._set_status(f"Error scrobbling: {str(e)}"))
+            return False
+    
+    def _handle_cancel_scrobble(self, cancel_data):
+        """Handle cancellation of browser scrobble"""
+        try:
+            title = cancel_data.get('title', '')
+            episode = cancel_data.get('episode', '')
+            
+            if not title:
+                self.logger.warning("Cancel scrobble request missing title")
+                return False
+            
+            # Create episode key to find pending timer
+            episode_key = f"{title}_{episode}" if episode else None
+            
+            # If specific episode provided, cancel that specific timer
+            if episode_key and episode_key in self.browser_pending_timers:
+                timer_id = self.browser_pending_timers[episode_key]
+                self.root.after_cancel(timer_id)
+                del self.browser_pending_timers[episode_key]
+                del self.browser_watched_episodes[episode_key]
+                self.logger.info(f"Cancelled browser scrobble timer for: {title} Episode {episode}")
+            else:
+                # Cancel all timers for this title
+                cancelled_count = 0
+                keys_to_remove = []
+                for key in list(self.browser_pending_timers.keys()):
+                    if key.startswith(f"{title}_"):
+                        timer_id = self.browser_pending_timers[key]
+                        self.root.after_cancel(timer_id)
+                        keys_to_remove.append(key)
+                        cancelled_count += 1
+                
+                for key in keys_to_remove:
+                    del self.browser_pending_timers[key]
+                    if key in self.browser_watched_episodes:
+                        del self.browser_watched_episodes[key]
+                
+                self.logger.info(f"Cancelled {cancelled_count} browser scrobble timers for: {title}")
+            
+            # Clear "Now Watching" panel if this was the current anime
+            current_display = self.current_anime_var.get()
+            if title in current_display:
+                self.root.after(0, lambda: self.current_anime_var.set("Now Watching: None"))
+                self.logger.info(f"Cleared Now Watching panel for cancelled scrobble: {title}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error handling cancel scrobble: {e}")
+            return False
     
     def _setup_window(self):
         """Setup main window properties"""
@@ -996,6 +1241,10 @@ class MainWindow:
         if hasattr(self, 'anime_matcher'):
             self.anime_matcher.stop_periodic_updater()
         
+        # Stop API server
+        if hasattr(self, 'api_server') and self.api_server:
+            self.api_server.stop()
+        
         # Stop system tray
         if self.tray_icon and hasattr(self.tray_icon, 'stop'):
             try:
@@ -1777,16 +2026,43 @@ class MainWindow:
             v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
             
-            # Load log content
+            # Load log content with robust encoding handling
+            def load_log_content():
+                try:
+                    # Try UTF-8 first
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        return f.read()
+                except UnicodeDecodeError:
+                    try:
+                        # Try with UTF-8 and error handling
+                        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read()
+                            # Add warning about encoding issues
+                            warning = "⚠️  WARNING: Log file contains encoding issues. Some characters may be displayed incorrectly.\n\n"
+                            return warning + content
+                    except Exception:
+                        try:
+                            # Fallback to system default encoding
+                            with open(log_file, 'r', encoding='cp1252', errors='replace') as f:
+                                content = f.read()
+                                warning = "⚠️  WARNING: Log file read with Windows-1252 encoding. Some characters may be displayed incorrectly.\n\n"
+                                return warning + content
+                        except Exception:
+                            # Last resort: read as binary and decode with errors
+                            with open(log_file, 'rb') as f:
+                                raw_content = f.read()
+                                content = raw_content.decode('utf-8', errors='replace')
+                                warning = "⚠️  WARNING: Log file read in binary mode. Some characters may be displayed incorrectly.\n\n"
+                                return warning + content
+            
             try:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content:
-                        text_widget.insert(tk.END, content)
-                        # Scroll to bottom
-                        text_widget.see(tk.END)
-                    else:
-                        text_widget.insert(tk.END, "Log file is empty.")
+                content = load_log_content()
+                if content:
+                    text_widget.insert(tk.END, content)
+                    # Scroll to bottom
+                    text_widget.see(tk.END)
+                else:
+                    text_widget.insert(tk.END, "Log file is empty.")
             except FileNotFoundError:
                 text_widget.insert(tk.END, "Log file not found. No logs have been generated yet.")
             except Exception as e:
@@ -1803,13 +2079,12 @@ class MainWindow:
                 text_widget.config(state=tk.NORMAL)
                 text_widget.delete(1.0, tk.END)
                 try:
-                    with open(log_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        if content:
-                            text_widget.insert(tk.END, content)
-                            text_widget.see(tk.END)
-                        else:
-                            text_widget.insert(tk.END, "Log file is empty.")
+                    content = load_log_content()
+                    if content:
+                        text_widget.insert(tk.END, content)
+                        text_widget.see(tk.END)
+                    else:
+                        text_widget.insert(tk.END, "Log file is empty.")
                 except Exception as e:
                     text_widget.insert(tk.END, f"Error reading log file: {e}")
                 text_widget.config(state=tk.DISABLED)
@@ -1827,6 +2102,32 @@ class MainWindow:
                     messagebox.showerror("Error", f"Could not open log folder: {e}")
             
             ttk.Button(buttons_frame, text="Open Log Folder", command=open_log_folder).pack(side=tk.LEFT, padx=(10, 0))
+            
+            # Clean logs button (to fix encoding issues)
+            def clean_logs():
+                if messagebox.askyesno("Clean Logs", "This will create a new clean log file. Current logs will be backed up. Continue?"):
+                    try:
+                        import shutil
+                        import os
+                        from datetime import datetime
+                        
+                        # Create backup
+                        backup_file = log_file + ".backup"
+                        shutil.copy2(log_file, backup_file)
+                        
+                        # Create new clean log file
+                        with open(log_file, 'w', encoding='utf-8') as f:
+                            f.write("# Log file cleaned due to encoding issues\n")
+                            f.write(f"# Original log backed up to: {backup_file}\n")
+                            f.write(f"# Clean log started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                        
+                        messagebox.showinfo("Success", f"Logs cleaned successfully. Backup saved to: {backup_file}")
+                        refresh_logs()  # Refresh the display
+                        
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Failed to clean logs: {e}")
+            
+            ttk.Button(buttons_frame, text="Clean Logs", command=clean_logs).pack(side=tk.LEFT, padx=(10, 0))
             
             # Close button
             ttk.Button(buttons_frame, text="Close", command=log_window.destroy).pack(side=tk.RIGHT)
