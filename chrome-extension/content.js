@@ -6,6 +6,11 @@ const SITE_SELECTORS = {
   'qanime.ru': {
     title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
     episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
+  },
+  // qfilms.ru
+  'qfilms.ru': {
+    title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
+    episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
   }
 };
 
