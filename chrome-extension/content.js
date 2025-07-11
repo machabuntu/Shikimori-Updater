@@ -3,7 +3,7 @@
 // Site-specific selectors for popular anime streaming sites
 const SITE_SELECTORS = {
   // qanime.ru
-  'qanime.ru': {
+  'qfilms.ru': {
     title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
     episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
   }
@@ -11,7 +11,7 @@ const SITE_SELECTORS = {
 
 // Extract English title from qanime.ru title format
 function extractEnglishTitleFromQanime(fullTitle) {
-  console.log('Anime Scrobbler: Processing qanime.ru title:', fullTitle);
+  console.log('Anime Scrobbler: Processing qfilms.ru title:', fullTitle);
   
   // Pattern: "Русское название / English Title - season episode"
   // Example: "Апокалипсис: Отель / Apocalypse Hotel - 1 сезон, 4 серия"
@@ -53,7 +53,7 @@ function extractAnimeInfo() {
   let selectors = null;
   
   // Add debugging for qanime.ru
-  if (hostname.includes('qanime.ru')) {
+  if (hostname.includes('qfilms.ru')) {
     console.log('Anime Scrobbler: Debugging qanime.ru page');
     console.log('URL:', window.location.href);
     console.log('Page title:', document.title);
@@ -99,6 +99,7 @@ function extractAnimeInfo() {
   
   // Try to extract title
   let title = null;
+  let episodeFromTitle = null;
   const titleSelectors = selectors.title.split(', ');
   for (const selector of titleSelectors) {
     const element = document.querySelector(selector);
@@ -112,14 +113,21 @@ function extractAnimeInfo() {
       }
       text = text.trim();
       if (text) {
+        let fromTitle = text.match(/(\d+)\sсерия/);
+        if(fromTitle) {
+          let epNum = fromTitle[1];
+          if(epNum) {
+            episodeFromTitle = parseInt(epNum);
+          }
+        }
         // Special handling for qanime.ru titles
-        if (hostname.includes('qanime.ru')) {
+        if (hostname.includes('qfilms.ru')) {
           title = extractEnglishTitleFromQanime(text);
         } else {
           title = text;
         }
         console.log(`Anime Scrobbler: Found title using selector "${selector}": ${text}`);
-        if (hostname.includes('qanime.ru')) {
+        if (hostname.includes('qfilms.ru')) {
           console.log(`Anime Scrobbler: Extracted English title: ${title}`);
         }
         break;
@@ -128,9 +136,11 @@ function extractAnimeInfo() {
   }
   
   // Try to extract episode number
+  console.log(`Anime Scrobbler: check1 "${episodeFromTitle}" in "${title}"`);
   let episode = null;
   const episodeSelectors = selectors.episode.split(', ');
   for (const selector of episodeSelectors) {
+    console.log(`Anime Scrobbler: check "${selector}"`);
     const element = document.querySelector(selector);
     if (element) {
       let text = '';
@@ -153,7 +163,10 @@ function extractAnimeInfo() {
           }
         }
         if (episode) {
-          console.log(`Anime Scrobbler: Found episode using selector "${selector}": ${episode}`);
+          if(episodeFromTitle && episode != episodeFromTitle) {
+            episode = episodeFromTitle;
+          }
+          console.log(`Anime Scrobbler: Found111 episode using selector "${selector}": ${episode}`);
           break;
         }
       }
@@ -207,13 +220,13 @@ function extractFromURL() {
     // Pattern: /series/title/episode/number
     { pattern: /\/series\/([^/]+)\/episode\/(\d+)/i, name: 'series-episode' },
     // Pattern: /video/id-title.season.episode (for qanime.ru)
-    { pattern: /\/video\/\d+-([^.]+)\.\d+\.sezon\.(\d+)\.seriya/i, name: 'qanime-sezon-seriya' },
+    { pattern: /\/video\/\d+-([^.]+)\.\d+\.sezon\.(\d+)\.seriya/i, name: 'qfilms-sezon-seriya' },
     // Pattern: /video/id-title-episode
     { pattern: /\/video\/\d+-(.+?)[-.](?:seriya|episode)[-.]?(\d+)/i, name: 'video-episode' },
     // More flexible qanime.ru patterns
-    { pattern: /\/video\/\d+-(.+?)\.(\d+)\./i, name: 'qanime-flexible' },
+    { pattern: /\/video\/\d+-(.+?)\.(\d+)\./i, name: 'qfilms-flexible' },
     // Extract from pathname segments
-    { pattern: /\/video\/\d+-(.+?)[-.](.+?)[-.](.+)/i, name: 'qanime-segments' }
+    { pattern: /\/video\/\d+-(.+?)[-.](.+?)[-.](.+)/i, name: 'qfilms-segments' }
   ];
   
   for (const { pattern, name } of urlPatterns) {
@@ -225,7 +238,7 @@ function extractFromURL() {
       let episode = null;
       
       // Handle different match patterns
-      if (name === 'qanime-segments') {
+      if (name === 'qfilms-segments') {
         // For /video/id-title-season-episode format
         title = match[1];
         // Look for episode number in any of the segments
@@ -285,7 +298,7 @@ function extractFromPageTitle() {
 // Clean anime title (remove common streaming site suffixes)
 function cleanTitle(title) {
   return title
-    .replace(/\s*-\s*(Crunchyroll|Funimation|AnimeLab|9anime|Gogoanime|qanime).*$/i, '')
+    .replace(/\s*-\s*(Crunchyroll|Funimation|AnimeLab|9anime|Gogoanime|qfilms).*$/i, '')
     .replace(/\s*\(\d{4}\)\s*$/, '') // Remove year
     .replace(/\s*-\s*Episode\s*\d+.*$/i, '') // Remove episode info
     .replace(/\s*-\s*\d+\s*seriya.*$/i, '') // Remove Russian episode info

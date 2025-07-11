@@ -4,7 +4,7 @@ Options Dialog - Configure application settings
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-import winreg
+#import winreg
 import os
 import sys
 from pathlib import Path
