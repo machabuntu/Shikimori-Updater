@@ -6,12 +6,22 @@ const SITE_SELECTORS = {
   'qfilms.ru': {
     title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
     episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
+  },
+  // qfilms.ru
+  'qfilms.ru': {
+    title: 'meta[property="og:title"], title, h1, .video-title, .anime-title',
+    episode: 'meta[property="ya:ovs:episod"], .episode-number, [class*="episode"]'
+  },
+  // Generic selectors for other sites
+  'generic': {
+    title: 'h1, .title, .anime-title, .video-title, .show-title, [class*="title"]',
+    episode: '.episode, .ep, .episode-number, .ep-number, [class*="episode"]'
   }
 };
 
-// Extract English title from qanime.ru title format
+// Extract English title from qanime.ru/qfilms.ru title format
 function extractEnglishTitleFromQanime(fullTitle) {
-  console.log('Anime Scrobbler: Processing qfilms.ru title:', fullTitle);
+  console.log('Anime Scrobbler: Processing qanime.ru/qfilms.ru title:', fullTitle);
   
   // Pattern: "Русское название / English Title - season episode"
   // Example: "Апокалипсис: Отель / Apocalypse Hotel - 1 сезон, 4 серия"
@@ -52,9 +62,9 @@ function extractAnimeInfo() {
   const hostname = window.location.hostname;
   let selectors = null;
   
-  // Add debugging for qanime.ru
-  if (hostname.includes('qfilms.ru')) {
-    console.log('Anime Scrobbler: Debugging qanime.ru page');
+  // Add debugging for qanime.ru and qfilms.ru
+  if (hostname.includes('qanime.ru') || hostname.includes('qfilms.ru')) {
+    console.log('Anime Scrobbler: Debugging qanime.ru/qfilms.ru page');
     console.log('URL:', window.location.href);
     console.log('Page title:', document.title);
     
@@ -120,14 +130,14 @@ function extractAnimeInfo() {
             episodeFromTitle = parseInt(epNum);
           }
         }
-        // Special handling for qanime.ru titles
-        if (hostname.includes('qfilms.ru')) {
+        // Special handling for qanime.ru and qfilms.ru titles
+        if (hostname.includes('qanime.ru') || hostname.includes('qfilms.ru')) {
           title = extractEnglishTitleFromQanime(text);
         } else {
           title = text;
         }
         console.log(`Anime Scrobbler: Found title using selector "${selector}": ${text}`);
-        if (hostname.includes('qfilms.ru')) {
+        if (hostname.includes('qanime.ru') || hostname.includes('qfilms.ru')) {
           console.log(`Anime Scrobbler: Extracted English title: ${title}`);
         }
         break;
@@ -219,12 +229,12 @@ function extractFromURL() {
     { pattern: /\/watch\/(.+?)[-_](?:episode[-_])?(\d+)/i, name: 'watch-episode' },
     // Pattern: /series/title/episode/number
     { pattern: /\/series\/([^/]+)\/episode\/(\d+)/i, name: 'series-episode' },
-    // Pattern: /video/id-title.season.episode (for qanime.ru)
-    { pattern: /\/video\/\d+-([^.]+)\.\d+\.sezon\.(\d+)\.seriya/i, name: 'qfilms-sezon-seriya' },
+    // Pattern: /video/id-title.season.episode (for qanime.ru and qfilms.ru)
+    { pattern: /\/video\/\d+-([^.]+)\.\d+\.sezon\.(\d+)\.seriya/i, name: 'qanime-sezon-seriya' },
     // Pattern: /video/id-title-episode
     { pattern: /\/video\/\d+-(.+?)[-.](?:seriya|episode)[-.]?(\d+)/i, name: 'video-episode' },
-    // More flexible qanime.ru patterns
-    { pattern: /\/video\/\d+-(.+?)\.(\d+)\./i, name: 'qfilms-flexible' },
+    // More flexible qanime.ru/qfilms.ru patterns
+    { pattern: /\/video\/\d+-(.+?)\.(\d+)\./i, name: 'qanime-flexible' },
     // Extract from pathname segments
     { pattern: /\/video\/\d+-(.+?)[-.](.+?)[-.](.+)/i, name: 'qfilms-segments' }
   ];
@@ -298,7 +308,7 @@ function extractFromPageTitle() {
 // Clean anime title (remove common streaming site suffixes)
 function cleanTitle(title) {
   return title
-    .replace(/\s*-\s*(Crunchyroll|Funimation|AnimeLab|9anime|Gogoanime|qfilms).*$/i, '')
+    .replace(/\s*-\s*(Crunchyroll|Funimation|AnimeLab|9anime|Gogoanime|qanime|qfilms).*$/i, '')
     .replace(/\s*\(\d{4}\)\s*$/, '') // Remove year
     .replace(/\s*-\s*Episode\s*\d+.*$/i, '') // Remove episode info
     .replace(/\s*-\s*\d+\s*seriya.*$/i, '') // Remove Russian episode info
