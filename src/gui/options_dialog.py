@@ -2,11 +2,12 @@
 Options Dialog - Configure application settings
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
-import winreg
 import os
 import sys
+import tkinter as tk
+from tkinter import ttk, messagebox
+if 'nt' in sys.builtin_module_names:
+    import winreg
 from pathlib import Path
 from gui.modern_style import ModernStyle
 

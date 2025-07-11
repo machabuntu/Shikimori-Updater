@@ -49,8 +49,8 @@ except ImportError as e:
     logger = logging.getLogger('main')
 
 try:
-    from gui.main_window import MainWindow
     from core.config import Config
+    from gui.main_window import MainWindow
 except ImportError as e:
     logger.error(f"Failed to import main modules: {e}")
     messagebox.showerror("Import Error", f"Failed to import required modules: {e}\n\nPlease check the installation.")
@@ -67,6 +67,7 @@ def main():
         
         # Create main window
         root = tk.Tk()
+
         app = MainWindow(root, config)
         
         # Start the application
