@@ -64,17 +64,11 @@ def main():
         
         # Initialize configuration
         config = Config()
-
-        logger.info("Initialize configuration")
         
         # Create main window
         root = tk.Tk()
 
-        logger.info("Create main window")
-
         app = MainWindow(root, config)
-
-        logger.info("Poo poo")
         
         # Start the application
         root.mainloop()
