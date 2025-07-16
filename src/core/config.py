@@ -46,6 +46,10 @@ class Config:
                 "send_completed": True,
                 "send_dropped": False,
                 "send_rewatching": False
+            },
+            "updates": {
+                "auto_check": True,
+                "check_interval": 3600  # 1 hour in seconds
             }
         }
         

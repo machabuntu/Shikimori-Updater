@@ -88,6 +88,9 @@ class OptionsDialog:
         # Auto-monitor setting
         self.auto_monitor_var.set(self.config.get('monitoring.auto_start', False))
         
+        # Auto-update check setting
+        self.auto_update_check_var.set(self.config.get('updates.auto_check', True))
+        
         # Watch time setting (convert from seconds to minutes)
         watch_time_seconds = self.config.get('monitoring.min_watch_time', 60)
         self.watch_time_var.set(watch_time_seconds // 60)
@@ -180,6 +183,9 @@ class OptionsDialog:
             # Save auto-monitor setting
             self.config.set('monitoring.auto_start', self.auto_monitor_var.get())
             
+            # Save auto-update check setting
+            self.config.set('updates.auto_check', self.auto_update_check_var.get())
+            
             # Save watch time setting (convert minutes to seconds)
             watch_time_minutes = self.watch_time_var.get()
             self.config.set('monitoring.min_watch_time', watch_time_minutes * 60)
@@ -271,6 +277,12 @@ class OptionsDialog:
         auto_monitor_check = ttk.Checkbutton(startup_frame, text="Enable scrobbling by default on start",
                                             variable=self.auto_monitor_var)
         auto_monitor_check.pack(anchor=tk.W)
+        
+        # Auto-check for updates
+        self.auto_update_check_var = tk.BooleanVar()
+        auto_update_check = ttk.Checkbutton(startup_frame, text="Automatically check for updates (hourly)",
+                                           variable=self.auto_update_check_var)
+        auto_update_check.pack(anchor=tk.W, pady=(0, 5))
         
         # Scrobbling options
         monitor_frame = ttk.LabelFrame(self.main_tab, text="Scrobbling Options", padding="10")

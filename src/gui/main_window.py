@@ -41,6 +41,9 @@ from gui.options_dialog import OptionsDialog
 from gui.modern_style import ModernStyle
 from core.cache import CacheManager
 from utils.logger import get_logger
+from utils.updater import UpdateChecker
+from utils.version import get_version_info
+from gui.update_dialog import UpdateNotification
 
 class MainWindow:
     """Main application window"""
@@ -74,13 +77,16 @@ class MainWindow:
         self.browser_watched_episodes = {}  # Track browser episodes with start times: {unique_key: start_time}
         self.browser_pending_timers = {}  # Track pending timer callbacks: {unique_key: timer_id}
         
+        # Update check timer
+        self.update_check_timer = None
+        
         # Setup window
         self._setup_window()
         self._create_widgets()
         self._setup_monitoring()
         
         # Initialize API server
-        self.api_server = APIServer(scrobble_callback=self._handle_scrobble)
+        self.api_server = APIServer(scrobble_callback=self._handle_scrobble, shutdown_callback=self._handle_shutdown)
         self.api_server.start()
 
         # Load initial data if authenticated
@@ -93,6 +99,13 @@ class MainWindow:
         else:
             # Update window title for not logged in state
             self._update_window_title()
+        
+        # Check for updates on startup (after a delay)
+        self.root.after(5000, self._check_for_updates)
+        
+        # Start auto-update checks if enabled
+        if self.config.get('updates.auto_check', True):
+            self._schedule_update_check()
     
     def _handle_scrobble(self, anime_data):
         """Handle scrobble data received from API server or extension"""
@@ -332,6 +345,15 @@ class MainWindow:
             self.logger.error(f"Error handling cancel scrobble: {e}")
             return False
     
+    def _handle_shutdown(self):
+        """Handle shutdown request from API"""
+        try:
+            self.logger.info("Shutdown request received via API")
+            # Schedule the actual shutdown to happen on the main thread
+            self.root.after(0, self._actually_close)
+        except Exception as e:
+            self.logger.error(f"Error handling shutdown request: {e}")
+    
     def _setup_window(self):
         """Setup main window properties"""
         self.root.title("Shikimori Updater - Not logged in")
@@ -522,6 +544,8 @@ class MainWindow:
         self.menu.add_command(label="Refresh Synonyms", command=self._refresh_synonyms)
         self.menu.add_separator()
         self.menu.add_command(label="View Logs", command=self._show_log_viewer)
+        self.menu.add_separator()
+        self.menu.add_command(label="Check for Updates", command=self._check_for_updates)
         self.menu.add_separator()
         self.menu.add_command(label="Exit", command=self._exit_application)
         
@@ -979,9 +1003,11 @@ class MainWindow:
         if self.current_user:
             username = self.current_user.get('nickname', 'Unknown')
             scrobbling_status = "Active" if self.monitoring_active else "Passive"
-            title = f"{base_title} - Logged as {username} - Scrobbling {scrobbling_status}"
+            version = get_version_info()['version']
+            title = f"{base_title} - Logged as {username} - Scrobbling {scrobbling_status} - v{version}"
         else:
-            title = f"{base_title} - Not logged in"
+            version = get_version_info()['version']
+            title = f"{base_title} - Not logged in - v{version}"
         
         self.root.title(title)
     
@@ -1251,6 +1277,9 @@ class MainWindow:
                 self.tray_icon.stop()
             except:
                 pass
+        
+        # Stop update check timer
+        self._stop_update_check_timer()
         
         self.root.destroy()
     
@@ -2550,3 +2579,91 @@ class MainWindow:
                     f"Error updating volumes: {str(e)}"))
         
         threading.Thread(target=update_data, daemon=True).start()
+    
+    def _check_for_updates(self):
+        """Check for application updates"""
+        try:
+            version_info = get_version_info()
+            update_checker = UpdateChecker(version_info['github_repo'], version_info['version'])
+            
+            def update_callback(update_available, update_info):
+                if update_available and update_info:
+                    # Show update notification
+                    notification = UpdateNotification(self.root, update_info)
+                    notification.show()
+                else:
+                    # Only show "no updates" message if manually triggered
+                    if hasattr(self, '_manual_update_check') and self._manual_update_check:
+                        self._manual_update_check = False
+                        messagebox.showinfo("No Updates", "You are running the latest version!")
+            
+            # Mark as manual check if called from menu
+            import inspect
+            frame = inspect.currentframe()
+            if frame and frame.f_back:
+                caller_locals = frame.f_back.f_locals
+                if 'self' in caller_locals and hasattr(caller_locals['self'], 'menu'):
+                    self._manual_update_check = True
+            
+            update_checker.check_updates_async(update_callback)
+            
+        except Exception as e:
+            self.logger.error(f"Error checking for updates: {e}")
+            if hasattr(self, '_manual_update_check') and self._manual_update_check:
+                self._manual_update_check = False
+                messagebox.showerror("Update Error", f"Failed to check for updates: {str(e)}")
+    
+    def _schedule_update_check(self):
+        """Schedule the next automatic update check"""
+        if not self.config.get('updates.auto_check', True):
+            # Auto-check is disabled, cancel any existing timer
+            if self.update_check_timer:
+                self.root.after_cancel(self.update_check_timer)
+                self.update_check_timer = None
+            return
+        
+        # Get the check interval from config (in seconds)
+        check_interval = self.config.get('updates.check_interval', 3600)  # Default 1 hour
+        
+        # Schedule the next check
+        self.update_check_timer = self.root.after(check_interval * 1000, self._auto_check_for_updates)
+        
+        self.logger.info(f"Next automatic update check scheduled in {check_interval} seconds")
+    
+    def _auto_check_for_updates(self):
+        """Automatically check for updates (called by timer)"""
+        try:
+            # Only check if auto-check is still enabled
+            if not self.config.get('updates.auto_check', True):
+                return
+                
+            self.logger.info("Performing automatic update check")
+            
+            version_info = get_version_info()
+            update_checker = UpdateChecker(version_info['github_repo'], version_info['version'])
+            
+            def update_callback(update_available, update_info):
+                if update_available and update_info:
+                    # Show update notification (silently, not as manual check)
+                    notification = UpdateNotification(self.root, update_info)
+                    notification.show()
+                    self.logger.info(f"Automatic update check found new version: {update_info.get('latest_version', 'Unknown')}")
+                else:
+                    self.logger.info("Automatic update check: No updates available")
+                
+                # Schedule the next check regardless of result
+                self._schedule_update_check()
+            
+            update_checker.check_updates_async(update_callback)
+            
+        except Exception as e:
+            self.logger.error(f"Error during automatic update check: {e}")
+            # Schedule the next check even if this one failed
+            self._schedule_update_check()
+    
+    def _stop_update_check_timer(self):
+        """Stop the automatic update check timer"""
+        if self.update_check_timer:
+            self.root.after_cancel(self.update_check_timer)
+            self.update_check_timer = None
+            self.logger.info("Automatic update check timer stopped")

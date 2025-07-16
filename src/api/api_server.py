@@ -15,8 +15,9 @@ from utils.logger import get_logger
 class AnimeScrobbleHandler(BaseHTTPRequestHandler):
     """HTTP request handler for anime scrobble requests"""
     
-    def __init__(self, *args, scrobble_callback: Optional[Callable] = None, **kwargs):
+    def __init__(self, *args, scrobble_callback: Optional[Callable] = None, shutdown_callback: Optional[Callable] = None, **kwargs):
         self.scrobble_callback = scrobble_callback
+        self.shutdown_callback = shutdown_callback
         self.logger = get_logger('api_server')
         super().__init__(*args, **kwargs)
     
@@ -95,6 +96,25 @@ class AnimeScrobbleHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.logger.error(f"Error handling cancel scrobble request: {e}")
                 self.send_error_response(500, f"Internal server error: {str(e)}")
+        elif self.path == '/api/shutdown':
+            try:
+                self.logger.info("Received shutdown request")
+                
+                # Call the shutdown callback if provided
+                if self.shutdown_callback:
+                    try:
+                        self.send_success_response({"status": "success", "message": "Shutdown initiated successfully"})
+                        # Call shutdown callback after sending response
+                        threading.Thread(target=self.shutdown_callback, daemon=True).start()
+                    except Exception as e:
+                        self.logger.error(f"Error in shutdown callback: {e}")
+                        self.send_error_response(500, f"Internal shutdown error: {str(e)}")
+                else:
+                    self.send_error_response(500, "Shutdown handler not configured")
+                    
+            except Exception as e:
+                self.logger.error(f"Error handling shutdown request: {e}")
+                self.send_error_response(500, f"Internal server error: {str(e)}")
         else:
             self.send_error_response(404, "Not found")
     
@@ -129,9 +149,10 @@ class AnimeScrobbleHandler(BaseHTTPRequestHandler):
 class APIServer:
     """HTTP API Server for Chrome extension integration"""
     
-    def __init__(self, port: int = 5000, scrobble_callback: Optional[Callable] = None):
+    def __init__(self, port: int = 5000, scrobble_callback: Optional[Callable] = None, shutdown_callback: Optional[Callable] = None):
         self.port = port
         self.scrobble_callback = scrobble_callback
+        self.shutdown_callback = shutdown_callback
         self.server = None
         self.server_thread = None
         self.logger = get_logger('api_server')
@@ -146,7 +167,7 @@ class APIServer:
         try:
             # Create a custom handler class with the scrobble callback
             def handler_factory(*args, **kwargs):
-                return AnimeScrobbleHandler(*args, scrobble_callback=self.scrobble_callback, **kwargs)
+                return AnimeScrobbleHandler(*args, scrobble_callback=self.scrobble_callback, shutdown_callback=self.shutdown_callback, **kwargs)
             
             self.server = HTTPServer(('localhost', self.port), handler_factory)
             self.server_thread = threading.Thread(target=self._run_server, daemon=True)
