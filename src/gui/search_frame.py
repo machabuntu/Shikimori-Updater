@@ -42,27 +42,24 @@ class SearchFrame(ttk.Frame):
         tree_frame = ttk.Frame(results_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        columns = ("Name", "Type", "Episodes", "Year", "Score")
+        columns = ("Name", "Type", "Episodes", "Year")
         self.results_tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", height=12)
         
         # Configure columns
         self.results_tree.heading("#0", text="", anchor=tk.W)
         self.results_tree.column("#0", width=0, stretch=False)
         
-        self.results_tree.heading("Name", text="Anime Name", anchor=tk.W)
+        self.results_tree.heading("Name", text="Anime Name", anchor=tk.W, command=lambda: self._sort_tree('Name', False))
         self.results_tree.column("Name", width=300, anchor=tk.W)
         
-        self.results_tree.heading("Type", text="Type", anchor=tk.W)
+        self.results_tree.heading("Type", text="Type", anchor=tk.W, command=lambda: self._sort_tree('Type', False))
         self.results_tree.column("Type", width=80, anchor=tk.W)
         
-        self.results_tree.heading("Episodes", text="Episodes", anchor=tk.CENTER)
+        self.results_tree.heading("Episodes", text="Episodes", anchor=tk.CENTER, command=lambda: self._sort_tree('Episodes', False))
         self.results_tree.column("Episodes", width=80, anchor=tk.CENTER)
         
-        self.results_tree.heading("Year", text="Year", anchor=tk.CENTER)
+        self.results_tree.heading("Year", text="Year", anchor=tk.CENTER, command=lambda: self._sort_tree('Year', False))
         self.results_tree.column("Year", width=60, anchor=tk.CENTER)
-        
-        self.results_tree.heading("Score", text="Score", anchor=tk.CENTER)
-        self.results_tree.column("Score", width=60, anchor=tk.CENTER)
         
         # Scrollbars for results
         v_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
@@ -168,14 +165,9 @@ class SearchFrame(ttk.Frame):
             anime_type = anime.get('kind', '').upper()
             episodes = anime.get('episodes', 0) or '-'
             year = anime.get('aired_on', '')[:4] if anime.get('aired_on') else '-'
-            score = anime.get('score', 0)
-            if score and isinstance(score, (int, float)):
-                score_display = f"{float(score):.1f}"
-            else:
-                score_display = '-'
             
             item_id = self.results_tree.insert("", tk.END, values=(
-                name, anime_type, episodes, year, score_display
+                name, anime_type, episodes, year
             ))
             
             # Store anime data for later use
@@ -185,6 +177,31 @@ class SearchFrame(ttk.Frame):
         if filtered_results:
             self.add_button.config(state=tk.NORMAL)
     
+    def _sort_tree(self, col, reverse):
+        """Sort tree contents when column heading is clicked"""
+        def sort_key(item):
+            key, _ = item
+            if col in ['Episodes', 'Year']:
+                # Handle numeric sorting for Episodes and Year
+                try:
+                    if key == '-' or key == '':
+                        return -1 if col == 'Episodes' else 0
+                    return int(key)
+                except (ValueError, TypeError):
+                    return -1 if col == 'Episodes' else 0
+            else:
+                # String sorting for Name and Type
+                return key.lower() if key else ''
+        
+        l = [(self.results_tree.set(k, col), k) for k in self.results_tree.get_children('')]
+        l.sort(key=sort_key, reverse=reverse)
+
+        for index, (val, k) in enumerate(l):
+            self.results_tree.move(k, '', index)
+
+        # Reverse sort next time
+        self.results_tree.heading(col, command=lambda: self._sort_tree(col, not reverse))
+
     def _search_error(self, error_msg: str):
         """Handle search error"""
         self.search_button.config(state=tk.NORMAL, text="Search")
